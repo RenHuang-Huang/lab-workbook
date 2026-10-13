@@ -29,7 +29,7 @@ def normalize(value):
     return re.sub(r'[\s.\-_/]','',str(value)).casefold()
 
 def defaults():
-    return {'version':2,'status':'已接入三小列PDF',
+    return {'version':2,'updated_at':None,'item_updated_at':{},'status':'已接入三小列PDF',
             'rules':[{'label':name,'aliases':[name,*ALIASES.get(name,[])],'codes':['710','7101'] if name=='CA19-9' else [],
                       'zone':'生化／糞便' if name=='Lipase' else '外送','enabled':True,'source':'使用者2026-10-13指定' if name=='Lipase' else '使用者2026-09-20指定'} for name in SENDOUT]}
 
@@ -37,6 +37,8 @@ def load():
     return json.loads(PATH.read_text(encoding='utf-8')) if PATH.exists() else defaults()
 
 def validate(data):
+    from .settings_history import validate as validate_history
+    validate_history(data)
     from .subregions import validate as validate_positions
     validate_positions(data)
     from .print_style import color

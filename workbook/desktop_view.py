@@ -555,6 +555,7 @@ def build_print(app):
     actions=ttk.Frame(body,style='Card.TFrame');actions.pack(fill='x',pady=(8,0))
     ttk.Button(actions,text='套組、單項、診所設定',command=lambda:app.catalog_editor('items')).pack(side='left',fill='x',expand=True,pady=(0,8))
     help_icon(actions,'設定是否列印、列印代碼、區域、位置、流水號分組與診所簡稱，也可查找套組子項。黃色列為尚未儲存的修改；可一次儲存全部。').pack(side='left',padx=8)
+    ttk.Button(body,text='近三年使用統計',command=app.usage_statistics).pack(anchor='w',pady=(0,8))
     check(body,'機器分組已核對（隱藏待核對提示）',app.confirmed)
     ttk.Separator(body).pack(fill='x',pady=(16,12))
     heading=ttk.Frame(body,style='Card.TFrame');heading.pack(fill='x')

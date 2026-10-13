@@ -78,6 +78,9 @@ def normalize(settings, layout, catalog=None):
     result['font_sizes'] = font_settings.sizes(result)
     print_style.validate_settings(result)
     layout = copy.deepcopy(layout)
+    layout.setdefault('updated_at',None);layout.setdefault('item_updated_at',{})
+    from .settings_history import validate as validate_history
+    validate_history(result);validate_history(layout)
     config = cc.overrides(result, layout)
     if catalog is not None:
         if not isinstance(catalog.get('raw_catalog'), dict):

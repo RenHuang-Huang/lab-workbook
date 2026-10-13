@@ -179,6 +179,7 @@ class App:
             candidate=dict(self.settings,font_sizes=values)
             save_print_settings(candidate,CONFIG)
             self.settings['font_sizes']=values
+            self.settings['updated_at']=candidate.get('updated_at')
             self.settings_status.set('各欄字體已儲存，下次輸出與重新開啟程式都會使用。')
         try:self.font_window=FontSettings(self.root,self.settings,save)
         except ValueError as error:
@@ -204,6 +205,8 @@ class App:
                 self.catalog_document=updated
             else:save_print_settings(candidate,CONFIG)
             self.settings['print_color_rules']=values
+            self.settings['updated_at']=candidate.get('updated_at')
+            if active:self.update_catalog_info(updated)
             self.settings_status.set('列印代碼配色規則已儲存，下次輸出生效。')
             self.settings_status_label.configure(foreground='#243449')
         try:self.color_rule_window=ColorRules(self.root,self.settings,save)
@@ -261,7 +264,10 @@ class App:
             return False
         try:
             targets=[]
-            if scope!='system':targets.append((CONFIG,config_store.print_only(candidate)))
+            if scope!='system':
+                from .settings_history import stamp_file
+                candidate.update(stamp_file(config_store.print_only(get_settings()),config_store.print_only(candidate)))
+                targets.append((CONFIG,config_store.print_only(candidate)))
             if scope!='print':targets.append((PREFERENCES,{k:candidate[k] for k in PREFERENCE_KEYS}))
             config_store.transaction(targets)
         except OSError:
@@ -499,7 +505,9 @@ class App:
     def update_catalog_info(self,document):
         count=document['counts'];stamp=document['source'].get('fetched_at','未知').replace('T',' ')
         pending=document['review'].get('unresolved_dictionary_rows',0)
-        self.catalog_info.set(f"診所 {count['hospitals']} · 套組 {count['sets']} · 單項 {count['items']}\n資料庫更新：{stamp}"+(f'\n{pending} 筆來源代碼待核對' if pending else ''))
+        from .settings_history import display
+        modified=display(document.get('settings_updated_at')) or '尚無紀錄'
+        self.catalog_info.set(f"診所 {count['hospitals']} · 套組 {count['sets']} · 單項 {count['items']}\n資料庫更新：{stamp}\n列印設定最後更新：{modified}"+(f'\n{pending} 筆來源代碼待核對' if pending else ''))
         self.catalog_help.set('清單只含字典，不含病患資料。匯出含目前設定與校對資料；匯入只套用 settings，不改資料庫路徑。來源代碼待核對的內容可在匯出 JSON 的 lists.unresolved 查看。')
 
     def catalog_editor(self,mode,refresh=False):
@@ -570,7 +578,7 @@ class App:
         except (ValueError,OSError,TypeError):
             messagebox.showerror('未匯入','JSON 設定不完整、規則衝突或無法讀取，原設定保留。',parent=self.root);return
         if not messagebox.askyesno('套用 JSON 設定？',f"將依代碼覆蓋目前的機器分組、列印簡稱與診所簡稱。\n機器規則 {len(candidate['rules'])} 筆、列印規則 {len(layout['rules'])} 筆、診所簡稱 {len(layout['clinic_aliases'])} 筆。\n\n資料庫路徑、輸出資料夾及目前資料庫字典保留。\n清單中的 lists 區塊僅供校對；套用 settings 區塊。",parent=self.root,default='no'):return
-        try:updated=catalog_cache.apply_settings(self.catalog_document,candidate,layout)
+        try:updated=catalog_cache.apply_settings(self.catalog_document,candidate,layout,preserve_dates=True)
         except (OSError,ValueError):
             messagebox.showerror('未完成匯入','設定無法寫入，請檢查檔案權限。',parent=self.root);return
         self.settings.clear();self.settings.update(candidate);self.confirmed.set(False);self.catalog_document=updated
@@ -590,6 +598,8 @@ class App:
         self.settings_status.set('機器分組已保存，請重新核對。')
 
     def check_updates(self):
+        if self.usage_running():
+            self.update_status.set('請等候使用統計完成後再更新。');return
         if self.case_lookup.running:
             self.update_status.set('請等候病例查詢完成後再更新。');return
         if self.busy or self.update_checking:return
@@ -612,6 +622,8 @@ class App:
         if updates.version_key(release['version'])<=updates.version_key(APP_VERSION):
             self.update_status.set(f'目前已是最新版本 {APP_VERSION}');return
         self.update_status.set(f"可更新至 {release['version']}")
+        if self.usage_running():
+            self.update_status.set('已有新版，請等候使用統計完成後再按更新。');return
         if self.case_lookup.running:
             self.update_status.set('已有新版，請等候病例查詢完成後再按更新。');return
         if self.busy:return
@@ -651,12 +663,22 @@ class App:
         self.root.destroy()
 
     def close(self):
+        if self.usage_running():messagebox.showinfo('正在整理統計','請等候使用統計完成後再關閉。',parent=self.root);return
         if self.case_lookup.running:messagebox.showinfo('正在查詢','請等候病例查詢完成後再關閉。',parent=self.root);return
         if self.busy:messagebox.showinfo('正在輸出','請等候本次輸出完成。');return
         window=getattr(self,'catalog_window',None)
         if window is not None and window.winfo_exists() and not window.request_close():return
         if not self.save_preferences(False):return
         self.root.destroy()
+
+    def usage_running(self):
+        return bool(getattr(getattr(self,'usage_view',None),'running',False))
+
+    def usage_statistics(self):
+        current=getattr(self,'usage_view',None)
+        if current and current.window.winfo_exists():current.window.lift();return
+        from .usage_stats_ui import UsageStats
+        self.usage_view=UsageStats(self.root,self)
 
 def main():
     try:

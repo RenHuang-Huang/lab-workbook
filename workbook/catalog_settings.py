@@ -37,6 +37,9 @@ def records(catalog,settings,layout):
         row['print_state']=sr.print_state(row)
         row['subregion_display']=values['subregion'] or '自動'
         row['position_display']=str(values['position']) if values['position'] else '自動'
+        from .settings_history import display
+        row['updated_at']=layout.get('item_updated_at',{}).get(row['key'])
+        row['updated_display']=display(row['updated_at']) or '尚無紀錄'
         if row['kind']=='套組':row['note']='適用院所：'+str(row['clinic_code'] or '全部')+'；是：印套組，取代一般子項。否：依子項設定展開。跨區列印子項：印套組，另保留不同列印區域且啟用的子項。有流水號的子項仍獨立列印。'
         if row['color_rule_applied']:row['note']+='；已套用列印代碼配色規則，優先於個別代碼顏色。'
     return rows
@@ -182,7 +185,7 @@ class CatalogPage:
         self.group_box.bind('<<ComboboxSelected>>',self.group_changed)
         columns=[('code','診所代碼',135),('name','診所名稱',360),('label','列印簡稱',260)] if self.clinics else [
             ('kind','類型',100),('code','系統／套組代碼',140),('nhi','健保代碼',120),('name','項目名稱',235),
-            ('print_state','是否列印',155),('zone','列印區域',150),('subregion_display','子區域',100),('position_display','位置',85),('label','列印代碼／簡稱',170),('color_display','代碼顏色',120),('group','流水號分組',180)]
+            ('print_state','是否列印',155),('zone','列印區域',150),('subregion_display','子區域',100),('position_display','位置',85),('label','列印代碼／簡稱',170),('color_display','代碼顏色',120),('group','流水號分組',180),('updated_display','最後更新',190)]
         self.table=CatalogTable(page,columns,self.pick)
         for var in (self.label,self.zone,self.group,self.print_enabled,self.panel_print,self.subregion,self.position,self.ranked,self.code_color):var.trace_add('write',self.changed)
         self.refresh()

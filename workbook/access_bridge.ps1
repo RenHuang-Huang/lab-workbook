@@ -3,6 +3,8 @@
       [Parameter(Mandatory=$true)][string]$Output,
       [switch]$IncludeIdentity,
       [string]$CaseWorkNumber='',
+      [switch]$UsageStatistics,
+      [datetime]$StartDate,
       [ValidateSet('Microsoft.ACE.OLEDB.12.0','Microsoft.ACE.OLEDB.16.0')][string]$Provider='Microsoft.ACE.OLEDB.12.0')
 $ErrorActionPreference='Stop'
 if([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'MTA'){
@@ -11,6 +13,7 @@ if([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'MTA'){
                '-Database',$Database,'-Date',$Date.ToString('yyyy-MM-dd',[cultureinfo]::InvariantCulture),'-Output',$Output,'-Provider',$Provider)
  if($IncludeIdentity){$bridgeArgs+='-IncludeIdentity'}
  if($CaseWorkNumber){$bridgeArgs+=@('-CaseWorkNumber',$CaseWorkNumber)}
+ if($UsageStatistics){$bridgeArgs+=@('-UsageStatistics','-StartDate',$StartDate.ToString('yyyy-MM-dd',[cultureinfo]::InvariantCulture))}
  & $bridgeShell @bridgeArgs
  exit $LASTEXITCODE
 }
@@ -41,7 +44,66 @@ try{
  $start=$Date.Date.ToString('MM/dd/yyyy',[cultureinfo]::InvariantCulture)
  $end=$Date.Date.AddDays(1).ToString('MM/dd/yyyy',[cultureinfo]::InvariantCulture)
  $where="h.LCHK_INDATE >= #$start# AND h.LCHK_INDATE < #$end#"
- if($CaseWorkNumber){
+ if($UsageStatistics){
+  if($StartDate.Date -gt $Date.Date -or $StartDate.Year -lt 1900){throw 'Invalid period'}
+  $usageStart=$StartDate.Date.ToString('MM/dd/yyyy',[cultureinfo]::InvariantCulture)
+  $period="h.LCHK_INDATE >= #$usageStart# AND h.LCHK_INDATE < #$end#"
+  $totals=@{};$unknown=0;$orders=0;$linkedRows=0;$unresolvedRows=0
+  function ApplyOrder($entries,[string]$day){
+   $script:orders++
+   $panels=[System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+   foreach($entry in $entries){if($entry[0] -ceq 'G' -and $entry[1]){[void]$panels.Add($entry[1])}}
+   $states=@{}
+   foreach($entry in $entries){
+    $kind=$entry[0];$code=$entry[1];$parent=$entry[2]
+    if($kind -cnotin @('G','I') -or !$code){$script:unknown++;continue}
+    $key=$kind+'|'+$code
+    if(!$states.ContainsKey($key)){$states[$key]=@{kind=$kind;code=$code;direct=$false;uncertain=$false}}
+    if($kind -ceq 'G' -or !$parent){$states[$key].direct=$true}
+    elseif($panels.Contains($parent)){$script:linkedRows++}
+    else{$states[$key].direct=$true;$states[$key].uncertain=$true;$script:unresolvedRows++}
+   }
+   foreach($key in $states.Keys){
+    $state=$states[$key]
+    if(!$totals.ContainsKey($key)){$totals[$key]=@{kind=$state.kind;code=$state.code;total_count=0;direct_count=0;uncertain_count=0;first_used=$day;last_used=$day;first_direct='';last_direct=''}}
+    $item=$totals[$key];$item.total_count++
+    if($day -clt $item.first_used){$item.first_used=$day};if($day -cgt $item.last_used){$item.last_used=$day}
+    if($state.direct){
+     $item.direct_count++
+     if(!$item.first_direct -or $day -clt $item.first_direct){$item.first_direct=$day}
+     if(!$item.last_direct -or $day -cgt $item.last_direct){$item.last_direct=$day}
+    }
+    if($state.uncertain){$item.uncertain_count++}
+   }
+  }
+  # Chunk by calendar month and process one original order at a time. Internal
+  # order IDs are only local grouping keys; the output contains aggregate counts.
+  $cursor=$StartDate.Date;$until=$Date.Date.AddDays(1)
+  while($cursor -lt $until){
+   $next=[datetime]::new($cursor.Year,$cursor.Month,1).AddMonths(1);if($next -gt $until){$next=$until}
+   $lower=$cursor.ToString('MM/dd/yyyy',[cultureinfo]::InvariantCulture);$upper=$next.ToString('MM/dd/yyyy',[cultureinfo]::InvariantCulture)
+   $c.CommandTimeout=120
+   $r=$c.Execute("SELECT h.LCHK_ID,h.LCHK_INDATE,d.LCHK_ITEMTYPE,d.LCHK_ITEM,d.LCHK_MKEY FROM LCHKDATA h INNER JOIN LCHKDATA2 d ON h.LCHK_ID=d.LCHK_ID WHERE h.LCHK_INDATE>=#$lower# AND h.LCHK_INDATE<#$upper# ORDER BY h.LCHK_ID")
+   $order=$null;$day='';$entries=[System.Collections.Generic.List[object]]::new()
+   try{while(!$r.EOF){
+    $block=$r.GetRows(2048)
+    for($i=0;$i -lt $block.GetLength(1);$i++){
+     $key=[string]$block[0,$i]
+     if($null -ne $order -and $key -cne $order){ApplyOrder $entries $day;$entries.Clear()}
+     $order=$key;$day=([datetime]$block[1,$i]).ToString('yyyy-MM-dd')
+     $entries.Add(@(([string]$block[2,$i]).Trim(),([string]$block[3,$i]).Trim(),([string]$block[4,$i]).Trim()))
+    }
+   }}finally{$r.Close()}
+   if($null -ne $order){ApplyOrder $entries $day}
+   $cursor=$next
+  }
+  $items=Rows 'SELECT LCI_ID,LCI_NAME,LCI_NAMEC,LCI_NAMES,LCI_NHICODE FROM LCHKITEM'
+  $sets=Rows 'SELECT LCS_ID,LCS_NAME,LCS_UNIKEY,LCS_HOSPITAL,LCS_NHICODE FROM LCHKSET1'
+  $setMembers=Rows 'SELECT LCS_UNIKEY,LCS_ITEM,LCS_SERIAL FROM LCHKSET2'
+  $hospitals=Rows 'SELECT HOS_ID,HOS_NAME FROM LHOSPITAL'
+  $package=@{usage_statistics=$true;start_date=$StartDate.ToString('yyyy-MM-dd');end_date=$Date.ToString('yyyy-MM-dd');counts=@($totals.Values);order_count=$orders;unknown_detail_count=$unknown;linked_detail_count=$linkedRows;unresolved_detail_count=$unresolvedRows;catalog=@{items=$items;sets=$sets;set_members=$setMembers;hospitals=$hospitals}}
+  $package | ConvertTo-Json -Depth 9 | Set-Content -Encoding utf8 -LiteralPath $Output
+ }elseif($CaseWorkNumber){
   # Keep daily matching keys local. Return only matched orders and possible peers;
   # Python applies the same merge exclusions as the workbook. No patient table,
   # raw card, ID, memo, reference ranges or historical results are queried here.

@@ -36,7 +36,7 @@ def select_rows(rows,query='',filters=None,column=None,descending=False):
 
 
 class CatalogTable:
-    def __init__(self,parent,columns,on_select):
+    def __init__(self,parent,columns,on_select,help_text=None):
         import tkinter as tk
         from tkinter import ttk
         from .ui_styles import readable_table
@@ -46,7 +46,7 @@ class CatalogTable:
         search=ttk.Frame(parent);search.pack(fill='x',pady=(0,6))
         ttk.Label(search,text='搜尋全部欄位').pack(side='left')
         from .help_tip import help_icon
-        help_icon(search,'各欄可分別篩選；點上方欄名可排序，再點一次反向。黃色列代表尚未儲存的修改。').pack(side='left',padx=4)
+        help_icon(search,help_text or '各欄可分別篩選；點上方欄名可排序，再點一次反向。黃色列代表尚未儲存的修改。').pack(side='left',padx=4)
         self.search_entry=ttk.Entry(search,textvariable=self.query);self.search_entry.pack(side='left',fill='x',expand=True,padx=10)
         ttk.Button(search,text='清除全部篩選',style='Table.TButton',command=self.clear_filters).pack(side='right')
         ttk.Label(parent,textvariable=self.count).pack(side='bottom',anchor='w',pady=(6,0))

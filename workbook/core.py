@@ -33,7 +33,7 @@ def default_settings():
     for code in ['2104','308','113','114','U981','U982','U983','U984','U985','U986']:
         rules[code]={'group':'aux','label':''}
     for code in ('138','1381'):rules[code]={'group':'e411','label':'eAg'}
-    return {'version':1,'mapping_confirmed':False,'show_column_headers':False,'fixed_20_rows':True,'ditto_bio':True,'ditto_patient':True,
+    return {'version':1,'updated_at':None,'mapping_confirmed':False,'show_column_headers':False,'fixed_20_rows':True,'ditto_bio':True,'ditto_patient':True,
             'show_region_lines':False,'export_glucose_ac':True,'glucose_ac_columns':5,
             'merged_color_enabled':True,'merged_color':'#7042A6','ditto_font_size':20,'ditto_bold':True,
             'ditto_alignment':'center','ditto_keep_adult':True,
@@ -51,7 +51,12 @@ def get_settings():
 
 def save_print_settings(settings,path=None):
     from .config_store import print_only
-    save_json(CONFIG if path is None else path,print_only(settings))
+    from .settings_history import stamp_file
+    target=CONFIG if path is None else Path(path)
+    previous=default_settings()
+    if target.exists():previous.update(load_json(target))
+    value=stamp_file(print_only(previous),print_only(settings))
+    save_json(target,value);settings['updated_at']=value.get('updated_at')
 def sort_work(s):
     s=str(s or '');return (0,int(s),s) if s.isdigit() else (1,0,s)
 

@@ -206,7 +206,10 @@ class UpgradeTests(unittest.TestCase):
     def test_print_persistence_has_no_system_keys_or_transient_layout(self):
         path=self.root/'print.json'
         core.save_print_settings(dict(self.settings,**self.system,layout=self.layout),path)
-        self.assertEqual(cs.read(path),self.settings)
+        from .settings_history import content,display
+        saved=cs.read(path)
+        self.assertEqual(content(saved),content(self.settings))
+        self.assertTrue(display(saved['updated_at']))
 
     def test_same_folder_import_refused(self):
         with self.assertRaises(ValueError):cs.import_previous(self.old,self.old)

@@ -56,6 +56,16 @@ def self_test(destination):
             app.case_lookup.render(case_result,case_data['date'],'1')
             assert len(app.case_lookup.tree.get_children())==1
             app.case_lookup.clear();assert not app.case_lookup.tree.get_children()
+            app.usage_statistics();usage=app.usage_view
+            assert usage.exclude.get() is True and not usage.running
+            usage.snapshot_settings()
+            usage.data=dict(usage_statistics=True,start_date='2023-10-15',end_date='2026-10-14',order_count=1,
+                unknown_detail_count=0,unresolved_detail_count=0,linked_detail_count=0,
+                catalog={key:case_data.get(key,[]) for key in ('items','sets','set_members','hospitals')},
+                counts=[dict(kind='I',code='101',total_count=1,direct_count=1,uncertain_count=0,
+                    first_used='2026-10-14',last_used='2026-10-14',first_direct='2026-10-14',last_direct='2026-10-14')])
+            usage.render();assert len(usage.tables['單項'].rows)==1
+            assert usage.document['rows'][0]['count']==1;usage.close()
             assert not hasattr(app,'setting_tabs')
             assert len(app.print_scroll.buttons)==6
             assert [b.cget('text') for b in app.print_scroll.buttons]==['頁面版面','欄位與分區','併單與同上符號','併單來源配色','項目列印與簡稱','項目對應顏色']
@@ -183,7 +193,7 @@ def self_test(destination):
             win=catalog_settings.editor(root,lookup,app.settings);win.withdraw();root.update()
             assert len(win.catalog_tabs.tabs())==3
             table=win.catalog_pages['items'].table
-            assert len(table.filters)==11
+            assert len(table.filters)==12 and 'updated_display' in table.filters
             assert str(table.tree.cget('show'))==''
             assert all(hasattr(app,name) for name in ('catalog_import_button','catalog_export_button','catalog_update_button'))
             assert '套組、單項、診所設定' in labels(root)

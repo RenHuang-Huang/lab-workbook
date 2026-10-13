@@ -54,7 +54,7 @@ def overrides(settings,layout):
         group=rule.get('group','routine')
         if group not in GROUP_NAMES:raise ValueError('JSON 設定含不支援的機器分組。')
         rules[str(code)]={'group':group,'label':str(rule.get('label') or '')}
-    return {'machine_rules':rules,'print_layout':copy.deepcopy(layout),'print_color_rules':color_rules(settings)}
+    return {'machine_rules':rules,'print_layout':copy.deepcopy(layout),'print_color_rules':color_rules(settings),'updated_at':settings.get('updated_at')}
 
 def source_key(database):
     return os.path.normcase(str(Path(database).resolve())) if str(database).strip() else ''
@@ -119,6 +119,8 @@ def build(catalog,settings,layout,source=None,resolved_rows=None):
         review={'unresolved_dictionary_rows':len(unresolved),'missing_panel_members':sum(len(p['missing_member_codes']) for p in panels),
                 'unconfigured_panel_aliases':sum(not p['label'] for p in panels)})
     document['projection_fingerprint']=fingerprint([document['records'],document['lists']])
+    from .settings_history import latest
+    document['settings_updated_at']=latest(settings.get('updated_at'),layout.get('updated_at'))
     return document
 
 def write(document,path=None):
@@ -182,6 +184,8 @@ def import_settings(document,current,catalog=None):
             if not isinstance(code,str) or not isinstance(label,str) or not label.strip():raise ValueError('診所簡稱格式不正確。')
             layout['clinic_aliases'][code]=label
         layout['code_colors']=copy.deepcopy(raw.get('code_colors',{}))
+        for key in ('updated_at','item_updated_at'):
+            if key in raw:layout[key]=copy.deepcopy(raw[key])
         for key in ('bio_auto_start','bio_groups_version'):
             if key in raw:layout[key]=copy.deepcopy(raw[key])
         if 'bio_adult_slot' in raw:
@@ -203,19 +207,29 @@ def import_settings(document,current,catalog=None):
             layout=source_panels.strip_generated(layout);layout['source_panels_migrated']=True
         validated=overrides({'rules':rules},layout)
         candidate=copy.deepcopy(current);candidate['rules']=validated['machine_rules'];candidate['mapping_confirmed']=False
+        if 'updated_at' in config:candidate['updated_at']=config['updated_at']
+        from .settings_history import validate as validate_history
+        validate_history(candidate)
         from .print_style import color_rules
         candidate['print_color_rules']=color_rules(config if 'print_color_rules' in config else current)
         candidate.pop('layout',None)
         return candidate,layout
     except (KeyError,TypeError,AttributeError):raise ValueError('不是本程式可重用的 JSON 設定清單。') from None
 
-def apply_settings(active,candidate,layout,settings_path=None,layout_path=None,cache_path=None):
+def apply_settings(active,candidate,layout,settings_path=None,layout_path=None,cache_path=None,*,preserve_dates=False):
     """Stage all files first and roll back completed replacements on a failed save."""
     from . import core,layout_settings as ls
-    updated=build(active['raw_catalog'],candidate,layout,active['source'])
+    from .settings_history import stamp_items
+    previous=dict(core.default_settings(),rules=active['settings']['machine_rules'],
+        print_color_rules=active['settings'].get('print_color_rules',[]),updated_at=active['settings'].get('updated_at'))
+    source_path=Path(settings_path) if settings_path is not None else core.CONFIG
+    if source_path.exists():previous.update(core.load_json(source_path))
+    usable,_=display_catalog(active['raw_catalog'])
     from .config_store import print_only
-    targets=[(Path(settings_path) if settings_path is not None else core.CONFIG,print_only(candidate)),
-             (Path(layout_path) if layout_path is not None else ls.PATH,layout),
+    saved_settings,saved_layout=stamp_items(print_only(previous),active['settings']['print_layout'],print_only(candidate),layout,usable,preserve_dates)
+    updated=build(active['raw_catalog'],saved_settings,saved_layout,active['source'])
+    targets=[(Path(settings_path) if settings_path is not None else core.CONFIG,print_only(saved_settings)),
+             (Path(layout_path) if layout_path is not None else ls.PATH,saved_layout),
              (Path(cache_path) if cache_path is not None else PATH,updated)]
     staged=[];committed=[]
     try:
@@ -233,4 +247,5 @@ def apply_settings(active,candidate,layout,settings_path=None,layout_path=None,c
         raise
     finally:
         for _,temp,_ in staged:temp.unlink(missing_ok=True)
+    candidate.update(saved_settings);layout.update(saved_layout)
     return updated
