@@ -34,7 +34,7 @@ class SubregionPage:
         checks=ttk.Frame(form);checks.pack(fill='x')
         self.sub_check=ttk.Checkbutton(checks,text='子區域遞補',variable=self.compact_subregions);self.sub_check.pack(side='left')
         self.pos_check=ttk.Checkbutton(checks,text='位置遞補',variable=self.compact_positions);self.pos_check.pack(side='left',padx=12)
-        help_icon(checks,'子區域遞補：空區由後區往左補；位置遞補：空位由後項往上補。取消則保留空位。生化每區最多三列，其他區域五列。').pack(side='left')
+        help_icon(checks,'子區域遞補：空區由後區往左補；位置遞補：空位由後項往上補。取消則保留空位。所有檢驗區每欄最多三列，超出往下一欄補位。').pack(side='left')
         ttk.Label(form,textvariable=self.status,wraplength=860).pack(anchor='w')
         self.table=CatalogTable(page,[('zone','列印區域',190),('subregion_display','子區域',100),('display','顯示設定',330),
                                      ('compact_subregions','子區域遞補',160),('compact_positions','位置遞補',150)],self.pick)

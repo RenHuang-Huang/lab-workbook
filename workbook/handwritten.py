@@ -1,4 +1,4 @@
-"""A4 renderer: independent zones, expanding from three to four/five sub-rows."""
+"""A4 renderer: independent zones with at most three rows per column."""
 from __future__ import annotations
 import copy,math,re,os
 from pathlib import Path
@@ -453,9 +453,9 @@ def export(path,rows,date,settings,draft=False):
             number=str(current[group+'_seq'])+('/' if group=='mab' else '')
             color=serial_ink(group,settings,item.get('_serial_base_size',fonts['e411' if group=='e411' else 'other']))
             if item.get('panel'):
-                runs.append((' '+{'e411':'e411','hba1c':'HbA1c','mab':'mab'}[group]+' '+number,color))
-            elif group=='e411':runs.insert(0,(number+' ',color))
-            else:runs.append((' '+number,color))
+                runs.append(({'e411':'e411','hba1c':'HbA1c','mab':'mab'}[group]+number,color))
+            elif group=='e411':runs.insert(0,(number,color))
+            else:runs.append((number,color))
         return runs,machines
     def draw_subregions(items,key,x,w,y,tiny=False,only_adult=False):
         from . import subregions as sr
@@ -469,7 +469,7 @@ def export(path,rows,date,settings,draft=False):
         count=max(normal_columns,columns);cw=w/count;scale=normal_columns/count
         readable_min=min(7.5,fonts[key])
         peak=max(max(p for p,_ in g['entries']) for g in groups)
-        if key=='bio' and peak>3:raise LayoutCapacityError('生化區最多三小列')
+        if peak>3:raise LayoutCapacityError('檢驗區每欄最多三小列')
         for group in groups:
             if only_adult and not any(ditto.is_adult(item) for _,item in group['entries']):continue
             gx=x+cw*group['column']
@@ -628,11 +628,11 @@ def export(path,rows,date,settings,draft=False):
                 if machine and machine not in printed:
                     serial=str(row[machine+'_seq'])+('/' if machine=='mab' else '')
                     serial_color=serial_ink(machine,settings,fonts[key])
-                    if machine in ('hba1c','mab'):segments.append((' '+serial,serial_color))
-                    else:segments.insert(0,(serial+' ',serial_color))
+                    if machine in ('hba1c','mab'):segments.append((serial,serial_color))
+                    else:segments.insert(0,(serial,serial_color))
                     printed.add(machine)
                 tokens.append((segments,results))
-            packed=pack_segments(tokens,w,rowh,item_width,max_lanes=3 if key=='bio' else 5,start_size=fonts[key])
+            packed=pack_segments(tokens,w,rowh,item_width,max_lanes=3,start_size=fonts[key])
             draw_packed(packed,packed_x,w,y)
         line(20,y+rowh,200,y+rowh,red,.6)
         return minimum_font(commands)
@@ -684,7 +684,7 @@ def export(path,rows,date,settings,draft=False):
                 current=slots[index];printed=set();z=current['zones']
                 current_ditto=ditto_flags[index]
                 adaptive_scale=min(1,rowh/entry['needed'])
-                adaptive_reduced=not fixed_20 and any(g['size']*adaptive_scale<min(7.5,fonts[key])-.001
+                adaptive_reduced=not fixed_20 and any(zplan.get('forced') or g['size']*adaptive_scale<min(7.5,fonts[key])-.001
                     for key,zplan in plans[index]['zones'].items() if zplan for g in zplan['groups'])
                 commands=[];previous_before=previous;counts_before=dict(expanded_counts)
                 try:

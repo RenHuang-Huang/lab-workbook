@@ -30,13 +30,13 @@ def zone_plan(items,key,layout,columns,width,font_size,segments,measure,seen=Non
     zone=next(z for z,k in sr.ZONE_KEYS.items() if k==key)
     try:groups=sr.arrange(items,zone,layout,expand_vertical=True,columns=columns)
     except LayoutCapacityError:
-        if not force or key!='bio':raise
+        if not force:raise
         from .compact_layout import pack_segments
         seen=set() if seen is None else seen;tokens=[]
         for item in items:
             runs,machines=segments(item,seen);seen.update(machines);tokens.append((runs,bool(machines)))
         packed=pack_segments(tokens,width,12,measure,max_lanes=3,start_size=font_size)
-        return dict(packed=packed,offset=0,width=width,adult=None,height=12,groups=[dict(size=packed[0])])
+        return dict(packed=packed,offset=0,width=width,adult=None,height=12,groups=[dict(size=packed[0])],forced=True)
     count=max(columns,max(g['column'] for g in groups)+1);cw=width/count
     result=[];seen=set() if seen is None else seen;line_counts={};maximum_size=0;single_height=0
     padding=min(1.2,cw*.2)
@@ -47,9 +47,8 @@ def zone_plan(items,key,layout,columns,width,font_size,segments,measure,seen=Non
             runs,machines=segments(item,seen);seen.update(machines)
             reserve=min(3,cw*.28) if item.get('machines') or item.get('machine') or key in ('e411','other') else 0
             room=cw-padding-reserve
-            # A single glyph must fit. Names may wrap rather than shrink as a whole.
-            widest=(sum(measure_run(measure,value,size,ink) for value,ink in runs) if key=='bio' else
-                max((measure_run(measure,ch,size,ink) for value,ink in runs for ch in str(value) if ch!='\n'),default=0))
+            # Each item occupies one lane; wrapping must never create a fourth.
+            widest=sum(measure_run(measure,value,size,ink) for value,ink in runs)
             if widest>room:size=min(size,size*room/widest)
             prepared.append((position,runs,machines,reserve,room))
         if single:
@@ -57,10 +56,10 @@ def zone_plan(items,key,layout,columns,width,font_size,segments,measure,seen=Non
             entire=sum(measure_run(measure,value,24,ink) for value,ink in runs)
             size=max(size,min(24,24*room/max(entire,.001)))
         if size<min(7.5,font_size)-.001 and not force:
-            raise LayoutCapacityError('子區域單字寬度不足，請減少橫向子區域或調整字級')
+            raise LayoutCapacityError('子區域欄寬不足，請調整簡稱、區域或字級')
         pieces=[]
         for position,runs,machines,reserve,room in prepared:
-            lines=[runs] if key=='bio' else wrap_runs(runs,room,size,measure)
+            lines=[runs]
             pieces.append(dict(position=position,lines=lines,machines=machines,reserve=reserve))
             if not single:line_counts[position]=max(line_counts.get(position,1),len(lines))
             else:single_height=max(single_height,required_height(len(lines),run_height(runs,size)))

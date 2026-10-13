@@ -34,10 +34,10 @@ def records(catalog,settings,layout):
         row['code_color']=layout.get('code_colors',{}).get(row['key'],'')
         row['color_display']=ps.title(ps.code_color(layout,row['key'],row['label'],settings,row.get('print_zone',row['zone']))) or '自動'
         row['color_rule_applied']=bool(ps.matching_color(settings,row['label'],row.get('print_zone',row['zone'])))
-        row['print_state']='是' if row['print_enabled'] else '否'
+        row['print_state']=sr.print_state(row)
         row['subregion_display']=values['subregion'] or '自動'
         row['position_display']=str(values['position']) if values['position'] else '自動'
-        if row['kind']=='套組':row['note']='適用院所：'+str(row['clinic_code'] or '全部')+'；列印套組時取代無流水號的子項；有流水號的子項仍獨立列印。取消則依子項設定展開。'
+        if row['kind']=='套組':row['note']='適用院所：'+str(row['clinic_code'] or '全部')+'；是：印套組，取代一般子項。否：依子項設定展開。跨區列印子項：印套組，另保留不同列印區域且啟用的子項。有流水號的子項仍獨立列印。'
         if row['color_rule_applied']:row['note']+='；已套用列印代碼配色規則，優先於個別代碼顏色。'
     return rows
 
@@ -55,6 +55,10 @@ def edit_item(settings,layout,record,label,zone,group=None,*,print_enabled=None,
     mode=position_mode if position_mode is not None else record.get('position_mode','slot')
     if mode not in ('slot','order'):raise ValueError('位置模式不正確。')
     single=record['kind']=='單項';old_group=record.get('machine_group')
+    cross_zone=record.get('print_mode')=='cross_zone'
+    if isinstance(print_enabled,str):
+        if single or print_enabled not in sr.PRINT_STATES:raise ValueError('套組列印請選是、否或跨區列印子項。')
+        cross_zone=print_enabled=='跨區列印子項';print_enabled=print_enabled!='否'
     if single:
         if group not in MACHINE_NAMES:raise ValueError('請選擇流水號分組。')
         if group=='aux':
@@ -79,12 +83,14 @@ def edit_item(settings,layout,record,label,zone,group=None,*,print_enabled=None,
         if single and print_enabled and group=='aux':raise ValueError('計算／行政項目若要列印，請先改為「不編流水號」或指定流水號分組。')
         values=dict(print_enabled=print_enabled,subregion=subregion if subregion is not None else record.get('subregion',''),
                     position=record.get('position') if position is ... else position)
+        if not single and print_enabled and cross_zone:values['print_mode']='cross_zone'
         if mode=='order':values['position_mode']='order'
         if values!={k:record.get(k) for k in values} or layout.get('version',2)>=3:
             updated=sr.migrate(updated,[record]);updated['placements'][record['key']]=values;ls.validate(updated)
     if zone=='生化／糞便' and print_enabled is not None:
         if subregion not in (None,'','A','B','C','D','E','F'):raise ValueError('生化子區域請選 A～F 或自動。')
-        if mode!='order' and position is not ... and position is not None and position>3:raise ValueError('生化區最多三列，位置請選 1～3。')
+    if print_enabled is not None and mode!='order' and position is not ... and position is not None and position>3 and position!=record.get('position'):
+        raise ValueError('每欄最多三列，固定位置請選 1～3；排列順位可選 1～10。')
     if code_color is not None:
         colors=updated.setdefault('code_colors',{})
         if code_color:colors[record['key']]=ps.color(code_color)
@@ -136,6 +142,7 @@ class CatalogPage:
         self.get_rows=get_rows;self.batch=batch;self.selected=None;self.loading=False;self.base_rows={}
         self.label=tk.StringVar();self.zone=tk.StringVar();self.group=tk.StringVar()
         self.print_enabled=tk.BooleanVar(value=True);self.subregion=tk.StringVar(value='自動');self.position=tk.StringVar(value='自動')
+        self.panel_print=tk.StringVar(value='是')
         self.ranked=tk.BooleanVar(value=False);self.code_color=tk.StringVar(value='自動')
         self.info=tk.StringVar(value='請先選擇一筆');self.status=tk.StringVar()
         self.save_button=batch.save_button
@@ -155,7 +162,10 @@ class CatalogPage:
             self.zone_box.grid(row=2,column=1,sticky='ew',padx=(0,12),pady=(4,8))
             self.group_box.grid(row=2,column=2,sticky='ew',pady=(4,8))
             extra=ttk.Frame(form);extra.grid(row=3,column=0,columnspan=3,sticky='ew')
-            self.print_check=ttk.Checkbutton(extra,text='是否列印',variable=self.print_enabled,command=self.print_changed);self.print_check.pack(side='left',padx=(0,16))
+            print_holder=ttk.Frame(extra);print_holder.pack(side='left',padx=(0,12))
+            self.print_check=ttk.Checkbutton(print_holder,text='是否列印',variable=self.print_enabled,command=self.print_changed);self.print_check.pack(side='left')
+            self.panel_print_box=ttk.Combobox(print_holder,textvariable=self.panel_print,values=sr.PRINT_STATES,state='readonly',width=14,font=('Microsoft JhengHei UI',13))
+            self.panel_print_box.bind('<<ComboboxSelected>>',lambda _:self.print_changed())
             ttk.Label(extra,text='子區域').pack(side='left')
             self.subregion_box=ttk.Combobox(extra,textvariable=self.subregion,state='readonly',width=5,font=('Microsoft JhengHei UI',13));self.subregion_box.pack(side='left',padx=(8,16))
             ttk.Label(extra,text='位置').pack(side='left')
@@ -165,22 +175,22 @@ class CatalogPage:
             self.color_button=ttk.Button(extra,text='選色',style='Table.TButton',command=self.choose_color,width=5);self.color_button.pack(side='left',padx=4)
             ranked=ttk.Frame(form);ranked.grid(row=4,column=0,columnspan=3,sticky='ew',pady=(4,0))
             self.rank_check=ttk.Checkbutton(ranked,text='位置作為排列順位',variable=self.ranked,command=self.position_choices);self.rank_check.pack(side='left')
-            help_icon(ranked,'排列順位可選 1～10 或自動；依實際項目排序，滿了往後補位。固定位置則生化 1～3、其他 1～5，同位順延。').pack(side='left',padx=4)
+            help_icon(ranked,'排列順位可選 1～10 或自動；依實際項目排序，滿了往下一欄補位。所有區域固定位置皆為 1～3，同位順延。').pack(side='left',padx=4)
             self.members_button=ttk.Button(ranked,text='查看套組子項',style='Table.TButton',command=self.show_members,state='disabled');self.members_button.pack(side='right')
         form.bind('<Configure>',lambda e:self.info_label.configure(wraplength=max(300,e.width-60)))
         self.zone_box.bind('<<ComboboxSelected>>',self.zone_changed)
         self.group_box.bind('<<ComboboxSelected>>',self.group_changed)
         columns=[('code','診所代碼',135),('name','診所名稱',360),('label','列印簡稱',260)] if self.clinics else [
             ('kind','類型',100),('code','系統／套組代碼',140),('nhi','健保代碼',120),('name','項目名稱',235),
-            ('print_state','是否列印',100),('zone','列印區域',150),('subregion_display','子區域',100),('position_display','位置',85),('label','列印代碼／簡稱',170),('color_display','代碼顏色',120),('group','流水號分組',180)]
+            ('print_state','是否列印',155),('zone','列印區域',150),('subregion_display','子區域',100),('position_display','位置',85),('label','列印代碼／簡稱',170),('color_display','代碼顏色',120),('group','流水號分組',180)]
         self.table=CatalogTable(page,columns,self.pick)
-        for var in (self.label,self.zone,self.group,self.print_enabled,self.subregion,self.position,self.ranked,self.code_color):var.trace_add('write',self.changed)
+        for var in (self.label,self.zone,self.group,self.print_enabled,self.panel_print,self.subregion,self.position,self.ranked,self.code_color):var.trace_add('write',self.changed)
         self.refresh()
 
     @staticmethod
     def values(record,clinics=False):
         if clinics:return dict(label=record['label'])
-        return dict(label=record['label'],zone=record['zone'],group=record['group'],print_enabled=record['print_enabled'],
+        return dict(label=record['label'],zone=record['zone'],group=record['group'],print_enabled=sr.print_state(record) if record['kind']=='套組' else record['print_enabled'],
             subregion=record['subregion_display'],position=str(record['position']) if record['position'] else '自動',
             position_mode=record.get('position_mode','slot'),code_color=ps.title(record.get('code_color','')))
 
@@ -206,14 +216,18 @@ class CatalogPage:
             if record is None:
                 self.info.set('請先選擇一筆');self.label.set('');self.zone.set('');self.group.set('')
                 controls=[self.label_entry,self.zone_box,self.group_box]
-                if not self.clinics:controls += [self.print_check,self.subregion_box,self.position_box,self.rank_check,self.color_box,self.color_button]
+                if not self.clinics:controls += [self.print_check,self.panel_print_box,self.subregion_box,self.position_box,self.rank_check,self.color_box,self.color_button]
                 for widget in controls:widget.configure(state='disabled')
                 return
             edit=self.batch.drafts.get(self.mode,record['key'])
             values=edit['after'] if edit else self.values(self.selected,self.clinics)
             self.info.set(str(record['code'])+'  '+record['name']);self.label.set(values['label']);self.label_entry.configure(state='normal')
             if self.clinics:return
-            self.zone.set(values['zone']);self.group.set(values['group']);self.print_enabled.set(values['print_enabled'])
+            self.zone.set(values['zone']);self.group.set(values['group'])
+            if record['kind']=='套組':
+                self.panel_print.set(values['print_enabled']);self.print_check.pack_forget();self.panel_print_box.pack(side='left');self.panel_print_box.configure(state='readonly')
+            else:
+                self.print_enabled.set(values['print_enabled']);self.panel_print_box.pack_forget();self.print_check.pack(side='left')
             self.subregion.set(values['subregion']);self.position.set(values['position']);self.ranked.set(values['position_mode']=='order');self.code_color.set(values['code_color'])
             for widget in (self.print_check,self.rank_check,self.color_button):widget.configure(state='normal')
             for widget in (self.subregion_box,self.position_box,self.color_box):widget.configure(state='readonly' if widget!=self.color_box else 'normal')
@@ -227,14 +241,15 @@ class CatalogPage:
         if self.clinics:return dict(label=values['label'])
         try:color_display=ps.title(ps.matching_color(self.settings,values['label'],values['zone']) or ps.choice(values['code_color'])) or '自動'
         except ValueError:color_display=values['code_color']
-        return dict(label=values['label'],zone=values['zone'],group=values['group'],print_state='是' if values['print_enabled'] else '否',
+        state=values['print_enabled'] if isinstance(values['print_enabled'],str) else '是' if values['print_enabled'] else '否'
+        return dict(label=values['label'],zone=values['zone'],group=values['group'],print_state=state,
             subregion_display=values['subregion'],position_display=values['position'],color_display=color_display)
 
     def changed(self,*_):
         if self.loading or not self.selected:return
         record=self.selected
         after=dict(label=self.label.get())
-        if not self.clinics:after.update(zone=self.zone.get(),group=self.group.get(),print_enabled=self.print_enabled.get(),
+        if not self.clinics:after.update(zone=self.zone.get(),group=self.group.get(),print_enabled=self.panel_print.get() if record['kind']=='套組' else self.print_enabled.get(),
             subregion=self.subregion.get(),position=self.position.get(),position_mode='order' if self.ranked.get() else 'slot',code_color=self.code_color.get())
         self.batch.drafts.put(self.mode,record,self.values(record,self.clinics),after)
         self.table.update_rows(record['key'],self.project(after),bool(self.batch.drafts.get(self.mode,record['key'])))
@@ -256,7 +271,7 @@ class CatalogPage:
 
     def position_choices(self):
         bio=self.zone.get()=='生化／糞便'
-        self.position_box.configure(values=['自動',*map(str,range(1,11 if self.ranked.get() else 4 if bio else 6))])
+        self.position_box.configure(values=['自動',*map(str,range(1,11 if self.ranked.get() else 4))])
         self.subregion_box.configure(values=['自動',*('ABCDEF' if bio else sr.LETTERS)])
 
     def group_changed(self,*_):
@@ -265,7 +280,7 @@ class CatalogPage:
 
     def print_changed(self):
         if not self.selected:return
-        if self.print_enabled.get():
+        if (self.panel_print.get()!='否' if self.selected['kind']=='套組' else self.print_enabled.get()):
             if self.selected['kind']=='套組' and self.zone.get()==MEMBER_ZONE:
                 self.zone.set('生化／糞便');self.label_entry.configure(state='normal');self.label.set(self.selected['name'])
             elif not self.zone.get():self.zone.set(self.selected.get('print_zone','生化／糞便'))
@@ -278,7 +293,7 @@ class CatalogPage:
             inherited=self.zone.get()==MEMBER_ZONE
             self.label_entry.configure(state='disabled' if inherited else 'normal')
             if inherited:self.label.set('')
-            self.print_enabled.set(not inherited)
+            if inherited:self.panel_print.set('否')
         elif not self.zone.get():self.print_enabled.set(False)
 
     def save(self):return self.batch.save()

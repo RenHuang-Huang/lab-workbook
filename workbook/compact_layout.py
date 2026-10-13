@@ -1,35 +1,22 @@
-"""Lossless emergency packing inside the existing row and zone boundaries."""
+"""Lossless emergency packing: three rows down, then the next column."""
+import math
 from .print_style import measure_run,run_height
-def pack_segments(tokens,width,height,measure,max_lanes=5,start_size=10.5):
-    size=start_size
+def pack_segments(tokens,width,height,measure,max_lanes=3,start_size=10.5):
+    if not tokens:return start_size,[]
+    rows=min(3,max_lanes,len(tokens));columns=math.ceil(len(tokens)/rows)
+    cell_width=width/columns;size=start_size
     for attempt in range(180):
-        result_space=min(3.5,width*.22) if size>=6 else min(2,width*.15)*size/6
-        padding=min(1.5,size/4)
-        pieces=[]
-        for segments,has_result in tokens:
-            chars=[(ch,color) for value,color in segments for ch in str(value)]
-            room=width-padding-(result_space if has_result else 0)
-            groups=[[]];used=0
-            for ch,color in chars:
-                cw=measure_run(measure,ch,size,color)
-                # Prefer intact test names at a slightly smaller size. Split only
-                # unusually long names after exhausting normally readable sizes.
-                if size<6 and used+cw>room and groups[-1]:groups.append([]);used=0
-                groups[-1].append((ch,color));used+=cw
-            for index,group in enumerate(groups):
-                reserve=result_space if has_result and index==len(groups)-1 else 0
-                runs=[]
-                for ch,color in group:
-                    if runs and runs[-1][1]==color:runs[-1]=(runs[-1][0]+ch,color)
-                    else:runs.append((ch,color))
-                pieces.append({'runs':runs,'width':sum(measure_run(measure,ch,size,ink) for ch,ink in group)+reserve+padding,'result':reserve,'padding':padding})
-        lanes=[[]];used=0
-        for piece in pieces:
-            if used+piece['width']>width and lanes[-1]:lanes.append([]);used=0
-            lanes[-1].append(piece);used+=piece['width']
-        extent=max([size]+[run_height(segments,size) for segments,_ in tokens])
-        if (len(lanes)<=max_lanes and extent/72*25.4*1.22<=height/len(lanes)-.3
-                and all(p['width']<=width for p in pieces)):
-            return size,lanes
+        padding=min(1.2,cell_width*.12,size/4)
+        reserve=min(3,cell_width*.22)*min(1,size/6)
+        pieces=[];fits=True
+        for runs,has_result in tokens:
+            space=reserve if has_result else 0
+            measured=sum(measure_run(measure,value,size,ink) for value,ink in runs)
+            fits &= measured+space+padding<=cell_width
+            pieces.append(dict(runs=runs,width=cell_width,result=space,padding=padding))
+        extent=max([size]+[run_height(runs,size) for runs,_ in tokens])
+        if fits and extent/72*25.4*1.22<=height/(3 if rows==2 else rows)-.3:
+            # draw_packed consumes horizontal lanes; transpose column-major items.
+            return size,[[pieces[i] for i in range(row,len(pieces),rows)] for row in range(rows)]
         size*=.9
     raise ValueError('強制排版無法完成，請檢查項目名稱或欄位設定')

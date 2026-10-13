@@ -16,6 +16,10 @@ def self_test(destination):
         placed=subregions.arrange(ranked,'生化／糞便',layout)
         assert [(g['letter'],[i['label'] for _,i in g['entries']]) for g in placed]==[('A',['2','3','5']),('B',['6'])]
         assert subregions.arrange(ranked[:1],'CBC／尿液',layout)[0]['entries'][0][0]==1
+        for zone in subregions.ZONE_KEYS:
+            groups=subregions.arrange(ranked,zone,layout,expand_vertical=True)
+            assert all(position<=3 for group in groups for position,_ in group['entries'])
+            assert len(groups)==2
         upgrade=folder/'upgrade'
         for target,value in config_store.targets(upgrade/'defaults',bundle,include_system=False):core.save_json(target,value)
         core.save_json(upgrade/'defaults/system_seed.json',dict(config_store.system_defaults(upgrade),database_path='synthetic.mdb'))
@@ -197,6 +201,11 @@ def self_test(destination):
             assert page.members_window.summary_var.get()=='共 2 筆子項（2 個不同代碼）'
             assert page.members_window.member_table.rows[1]['code']=='UNKNOWN'
             page.members_window.destroy()
+            assert list(page.panel_print_box['values'])==['是','否','跨區列印子項']
+            page.panel_print.set('跨區列印子項');page.print_changed();root.update()
+            _,cross_layout=win.batch.drafts.prepare(app.settings,ls.load())
+            assert cross_layout['placements']['G:LOOKUP']['print_mode']=='cross_zone'
+            win.batch.drafts.changes.clear()
             win.destroy()
             assert '子區域與自動起始區' in labels(root)
             win=catalog_settings.editor(root,core.safe_fixture(),app.settings,initial='subregions');win.withdraw();root.update()
@@ -216,13 +225,16 @@ def self_test(destination):
             assert (core.ROOT/'workbook/catalog_bridge.ps1').is_file()
             assert len(core.load_json(app.last_pdf.with_suffix('.工作進度.json'))['rows'])==24
             app.fixed_20_rows.set(False)
-            with patch('workbook.app.read_access',return_value=fixture),patch('workbook.app.os.startfile'):
+            with patch('workbook.app.read_access',return_value=fixture),patch('workbook.app.os.startfile'),patch('workbook.app.messagebox.askyesno',return_value=True):
                 app.submit();deadline=time.monotonic()+30
                 while app.busy and time.monotonic()<deadline:root.update();time.sleep(.01)
             assert not app.busy and app.last_pdf
             adaptive_summary=core.load_json(app.last_pdf.with_suffix('.工作進度.json'))['export_summary']
             assert adaptive_summary['fixed_20_rows'] is False and adaptive_summary['rows_per_page'] is None
-            assert sum(adaptive_summary['page_counts'])==24 and not adaptive_summary['forced_adjustments']
+            # Unabbreviated CBC members now spill horizontally after three rows;
+            # this artificial dense row may correctly ask for force confirmation.
+            assert sum(adaptive_summary['page_counts'])==24
+            assert all(entry['workno']=='00012' for entry in adaptive_summary['forced_adjustments'])
             app.fixed_20_rows.set(True)
             merged_fixture=core.safe_fixture()
             for h in merged_fixture['headers'][:2]:h.update(LCHK_PATNAME='人工併單範例',CHART_NUMBER='TEST-MERGE')

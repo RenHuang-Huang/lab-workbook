@@ -1,9 +1,16 @@
-"""Per-item visibility and deterministic, lossless A-I / 1-5 placement."""
+"""Per-item visibility and deterministic, lossless columns of at most three rows."""
 import copy
 from .errors import LayoutCapacityError
 
 LETTERS=tuple('ABCDEFGHI')
 MODES={'normal':'正常顯示','single_max':'只有一個項目時置中、字體最大'}
+PRINT_STATES=('是','否','跨區列印子項')
+
+
+def print_state(value):
+    if not value.get('print_enabled',False):return '否'
+    return '跨區列印子項' if value.get('print_mode')=='cross_zone' else '是'
+
 ZONE_KEYS={'生化／糞便':'bio','CBC／尿液':'cbc','外送':'sendout','e411':'e411','其他':'other'}
 BIO_GROUPS={
     'A':('@','SMA','LFT','RFT','Alb','TP'), 'B':('AC','PC','Fe'),
@@ -70,6 +77,8 @@ def validate(layout):
     for key,value in layout.get('placements',{}).items():
         if not isinstance(key,str) or not key or not isinstance(value,dict):raise ValueError('項目位置設定格式不正確。')
         if type(value.get('print_enabled')) is not bool:raise ValueError('是否列印必須為勾選值。')
+        if 'print_mode' in value and (not key.startswith('G:') or value['print_mode']!='cross_zone' or not value['print_enabled']):
+            raise ValueError('跨區列印子項僅適用於啟用列印的套組。')
         if value.get('subregion') not in ('',*LETTERS):raise ValueError('子區域必須為 A～I 或自動。')
         p=value.get('position')
         mode=value.get('position_mode','slot')
@@ -106,11 +115,11 @@ def arrange(items,zone,layout,*,expand_vertical=False,columns=9):
     """Explicit slots first, collisions shift down, automatic entries fill free slots.
 
     A full subgroup spills into the next available subgroup, never discards items.
-    Its overflow retains provenance. More than 45 items invokes the existing force path.
+    Its overflow retains provenance. A-I overflow invokes the existing force path.
+    expand_vertical/columns remain accepted for older callers but never add rows.
     """
-    bio=zone=='生化／糞便';limit=3 if bio else 5
+    bio=zone=='生化／糞便';limit=3
     letters=LETTERS[:6] if bio else LETTERS
-    if bio:expand_vertical=False
     slots={letter:[] for letter in LETTERS};automatic=[];overflow=[]
     for order,item in enumerate(items):
         p=item.get('placement',{});letter=p.get('subregion','');position=p.get('position')
@@ -129,32 +138,19 @@ def arrange(items,zone,layout,*,expand_vertical=False,columns=9):
         for position,order,item in fixed+[(None,order,item) for _,order,item in ranked]+floating:
             target=position or 1
             while target in cells[letter]:target+=1
-            if target<=limit or (expand_vertical and item.get('placement',{}).get('position_mode')!='order'):cells[letter][target]=item
+            if target<=limit:cells[letter][target]=item
             else:overflow.append((LETTERS.index(letter)+1,order,item))
     for start,order,item in overflow:
         candidates=letters[start:]
         target=next(((letter,p) for letter in candidates for p in range(1,limit+1) if p not in cells[letter]),None)
-        if target is None:raise LayoutCapacityError('生化 A～F／每區三列仍不足；未省略項目' if bio else '子區域 A～I／每區五個位置仍不足；未省略項目')
+        if target is None:raise LayoutCapacityError('生化 A～F／每區三列仍不足；未省略項目' if bio else '子區域 A～I／每區三列仍不足；未省略項目')
         cells[target[0]][target[1]]=item
     candidates=letters[letters.index(layout.get('bio_auto_start','A')):] if bio else letters
-    if expand_vertical:
-        # Keep explicitly assigned subregions; put additional content below them
-        # instead of creating progressively narrower columns.
-        chosen={letter for letter in LETTERS if cells[letter]}
-        def column_count(active):
-            end=max((LETTERS.index(c)+1 for c in active),default=0)
-            return sum(c in active or not options(layout,zone,c)['compact_subregions'] for c in LETTERS[:end])
-        for letter in LETTERS:
-            if column_count(chosen|{letter})<=columns:chosen.add(letter)
-        candidates=tuple(c for c in LETTERS if c in chosen)
     automatic.sort(key=lambda r:(r[2] if r[1].get('placement',{}).get('position_mode')=='order' and r[2] is not None else 100,r[0]))
     for order,item,position in automatic:
         if item.get('placement',{}).get('position_mode')=='order':position=None
         target=next(((letter,p) for letter in candidates for p in ([position] if position and position<=limit else range(1,limit+1)) if p not in cells[letter]),None)
-        if target is None and expand_vertical and item.get('placement',{}).get('position_mode')!='order':
-            letter=min(candidates,key=lambda c:max(cells[c],default=0))
-            target=(letter,max(max(cells[letter],default=0)+1,position or 1))
-        if target is None:raise LayoutCapacityError(f"生化 {layout.get('bio_auto_start','A')}～F 自動空位不足（每區最多三列）；未省略項目" if bio else '子區域 A～I／每區五個位置仍不足；未省略項目')
+        if target is None:raise LayoutCapacityError(f"生化 {layout.get('bio_auto_start','A')}～F 自動空位不足（每區最多三列）；未省略項目" if bio else '子區域 A～I／每區三列仍不足；未省略項目')
         cells[target[0]][target[1]]=item
     active=[];column=0
     for index,letter in enumerate(LETTERS):
