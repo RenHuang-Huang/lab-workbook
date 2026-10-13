@@ -36,7 +36,7 @@ class Navigation(ttk.Notebook):
         super().add(child,**options)
         title=options.get('text','');index=len(self.buttons);self.titles.append(title)
         button=ttk.Radiobutton(self.control_slot(bottom=index==1),text=title,value=str(child),variable=self.value,
-            image=nav_image(self.winfo_toplevel(),('export','system','print')[index]),compound='left',
+            image=nav_image(self.winfo_toplevel(),('export','system','print','search')[index]),compound='left',
             style='Sidebar.TRadiobutton',command=lambda:self.navigate(child))
         button.pack(fill='both',expand=True);button.bind('<Return>',lambda _:button.invoke())
         button.bind('<Enter>',lambda _:self.show_tip(button,title));button.bind('<Leave>',lambda _:self.hide_tip())
@@ -160,6 +160,9 @@ def nav_image(root,kind):
         draw.ellipse((8.5*scale,8.5*scale,15.5*scale,15.5*scale),outline=PRIMARY,width=2*scale)
     elif kind=='print':
         line((7,8,7,3,17,3,17,8));line((6,18,3,18,3,9,21,9,21,18,18,18));line((7,14,17,14,17,22,7,22,7,14))
+    elif kind=='search':
+        draw.ellipse((3*scale,3*scale,16*scale,16*scale),outline=PRIMARY,width=2*scale)
+        line((15,15,22,22))
     else:
         for y in (6,12,18):line((3,y,21,y))
     photo=ImageTk.PhotoImage(image.resize((18,18),Image.Resampling.LANCZOS),master=root)
@@ -352,6 +355,10 @@ def build(app):
     root.bind('<Control-Shift-Tab>',lambda _:app.tabs.cycle(-1))
     app.export_page=ttk.Frame(app.tabs,padding=(0,8,0,0));app.system_page=ttk.Frame(app.tabs,padding=(0,8,0,0));app.print_page=ttk.Frame(app.tabs,padding=(0,8,0,0))
     for page,title in [(app.export_page,'匯出工作簿'),(app.system_page,'系統設定'),(app.print_page,'列印設定')]:app.tabs.add(page,text=title)
+    app.case_page=ttk.Frame(app.tabs,padding=(0,8,0,0));app.tabs.add(app.case_page,text='病例查詢')
+    app.tabs.buttons[3].master.pack_configure(before=app.tabs.buttons[2].master)
+    from .case_lookup_ui import CaseLookup
+    app.case_lookup=CaseLookup(app.case_page,app)
     app.settings_page=app.system_page  # Existing error routes point directly at system settings.
     build_export(app)
     system_status=build_system(app);print_status=build_print(app)

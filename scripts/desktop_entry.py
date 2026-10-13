@@ -44,7 +44,18 @@ def self_test(destination):
             assert app.order_mode.get()=='merge_first' and app.db.get()==''
             assert core.load_json(app_module.PREFERENCES)==app_module.default_preferences()
             assert app.submit_button['text']=='送出並產生 PDF'
-            assert [app.tabs.tab(t,'text') for t in app.tabs.tabs()]==['匯出工作簿','系統設定','列印設定']
+            assert [app.tabs.tab(t,'text') for t in app.tabs.tabs()]==['匯出工作簿','系統設定','列印設定','病例查詢']
+            assert not app.case_lookup.ready
+            app.case_lookup.build()
+            app.case_lookup.number.set('00001')
+            from workbook.case_lookup import build_result
+            case_data=core.load_json(core.ROOT/'assets/demo.json')
+            case_data['details'][0]['LCHK_VALUE']='101'
+            case_result=build_result(case_data,'1',settings,layout)
+            assert case_result['matched_count']==1 and case_result['order_count']==1
+            app.case_lookup.render(case_result,case_data['date'],'1')
+            assert len(app.case_lookup.tree.get_children())==1
+            app.case_lookup.clear();assert not app.case_lookup.tree.get_children()
             assert not hasattr(app,'setting_tabs')
             assert len(app.print_scroll.buttons)==6
             assert [b.cget('text') for b in app.print_scroll.buttons]==['頁面版面','欄位與分區','併單與同上符號','併單來源配色','項目列印與簡稱','項目對應顏色']

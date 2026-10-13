@@ -590,6 +590,8 @@ class App:
         self.settings_status.set('機器分組已保存，請重新核對。')
 
     def check_updates(self):
+        if self.case_lookup.running:
+            self.update_status.set('請等候病例查詢完成後再更新。');return
         if self.busy or self.update_checking:return
         self.update_checking=True;self.update_button.configure(state='disabled')
         self.update_status.set('正在查詢 GitHub Release…')
@@ -610,6 +612,8 @@ class App:
         if updates.version_key(release['version'])<=updates.version_key(APP_VERSION):
             self.update_status.set(f'目前已是最新版本 {APP_VERSION}');return
         self.update_status.set(f"可更新至 {release['version']}")
+        if self.case_lookup.running:
+            self.update_status.set('已有新版，請等候病例查詢完成後再按更新。');return
         if self.busy:return
         import sys
         if not getattr(sys,'frozen',False):
@@ -647,6 +651,7 @@ class App:
         self.root.destroy()
 
     def close(self):
+        if self.case_lookup.running:messagebox.showinfo('正在查詢','請等候病例查詢完成後再關閉。',parent=self.root);return
         if self.busy:messagebox.showinfo('正在輸出','請等候本次輸出完成。');return
         window=getattr(self,'catalog_window',None)
         if window is not None and window.winfo_exists() and not window.request_close():return
