@@ -35,7 +35,10 @@ def default_settings():
     for code in ('138','1381'):rules[code]={'group':'e411','label':'eAg'}
     return {'version':1,'mapping_confirmed':False,'show_column_headers':False,'fixed_20_rows':True,'ditto_bio':True,'ditto_patient':True,
             'show_region_lines':False,'export_glucose_ac':True,'glucose_ac_columns':5,
-            'merged_color_enabled':True,'merged_color':'#7042A6','ditto_font_size':14,'ditto_bold':False,'print_color_rules':default_color_rules(),
+            'merged_color_enabled':True,'merged_color':'#7042A6','ditto_font_size':20,'ditto_bold':True,
+            'ditto_alignment':'center','ditto_keep_adult':True,
+            'serial_superscript':False,'serial_font_size':14,'serial_colors':{'e411':'#B02631','hba1c':'#215CAE','mab':'#B02631'},
+            'print_color_rules':default_color_rules(),
             'merged_order_colors':['#202830','#215CAE','#215CAE','#215CAE'],
             'merge_exclusions_enabled':True,'merge_excluded_worknos':list(DEFAULT_EXCLUSIONS),
             'rules':rules,'font_path':'C:/Windows/Fonts/msjh.ttc','font_sizes':dict(DEFAULTS)}

@@ -54,8 +54,13 @@ class App:
         self.merged_order_colors=[tk.StringVar(value=ps.title(value)) for value in ps.order_colors(self.settings)]
         self.merge_exclusions_enabled=tk.BooleanVar(value=self.settings.get('merge_exclusions_enabled',True))
         self.merge_excluded_worknos=tk.StringVar(value=', '.join(map(str,self.settings['merge_excluded_worknos'])))
-        self.ditto_font_size=tk.StringVar(value=str(self.settings.get('ditto_font_size',14)))
-        self.ditto_bold=tk.BooleanVar(value=self.settings.get('ditto_bold',False))
+        self.ditto_font_size=tk.StringVar(value=str(self.settings.get('ditto_font_size',20)))
+        self.ditto_bold=tk.BooleanVar(value=self.settings.get('ditto_bold',True))
+        self.ditto_alignment=tk.StringVar(value=ps.DITTO_ALIGN[self.settings.get('ditto_alignment','center')])
+        self.ditto_keep_adult=tk.BooleanVar(value=self.settings.get('ditto_keep_adult',True))
+        self.serial_superscript=tk.BooleanVar(value=self.settings.get('serial_superscript',False))
+        self.serial_font_size=tk.StringVar(value=str(self.settings.get('serial_font_size',14)))
+        self.serial_colors={key:tk.StringVar(value=ps.title(value)) for key,value in ps.serial_colors(self.settings).items()}
         self.confirmed=tk.BooleanVar(value=self.settings.get('mapping_confirmed',False))
         self.status=tk.StringVar(value='選擇工作日期後，按下送出即可產生工作簿。')
         self.result_text=tk.StringVar(value='尚未產生檔案')
@@ -134,6 +139,11 @@ class App:
         self.merge_exclusions_enabled.set(s['merge_exclusions_enabled'])
         self.merge_excluded_worknos.set(', '.join(map(str,s['merge_excluded_worknos'])))
         self.ditto_font_size.set(str(s['ditto_font_size']))
+        self.ditto_alignment.set(ps.DITTO_ALIGN[s.get('ditto_alignment','center')])
+        self.ditto_keep_adult.set(s.get('ditto_keep_adult',True))
+        self.serial_superscript.set(s.get('serial_superscript',False))
+        self.serial_font_size.set(str(s.get('serial_font_size',14)))
+        for key,value in ps.serial_colors(s).items():self.serial_colors[key].set(ps.title(value))
 
     def backup_settings(self):
         if self.busy:return
@@ -221,12 +231,23 @@ class App:
                 excluded=parse_exclusions(self.merge_excluded_worknos.get())
                 invalid_control=self.ditto_size_input
                 ditto_size=ps.validate_settings({'ditto_font_size':self.ditto_font_size.get()})
+                invalid_control=self.ditto_alignment_input
+                alignment=next((key for key,value in ps.DITTO_ALIGN.items() if value==self.ditto_alignment.get()),None)
+                if alignment is None:raise ValueError('同上符號位置請選擇置左、置中或置右。')
+                invalid_control=self.serial_size_input
+                ps.validate_settings({'serial_font_size':self.serial_font_size.get()})
+                serial_size=float(self.serial_font_size.get());serial_colors={}
+                for key,variable in self.serial_colors.items():
+                    invalid_control=self.serial_color_inputs[key]
+                    serial_colors[key]=ps.color(ps.choice(variable.get()))
                 candidate.update(show_column_headers=self.show_headers.get(),mapping_confirmed=self.confirmed.get(),
                     fixed_20_rows=self.fixed_20_rows.get(),ditto_bio=self.ditto_bio.get(),ditto_patient=self.ditto_patient.get(),
                     show_region_lines=self.show_region_lines.get(),export_glucose_ac=self.export_glucose_ac.get(),glucose_ac_columns=5,
                     merged_color_enabled=self.merged_color_enabled.get(),merged_order_colors=colors,
                     merge_exclusions_enabled=self.merge_exclusions_enabled.get(),merge_excluded_worknos=excluded,
-                    ditto_font_size=ditto_size,ditto_bold=self.ditto_bold.get())
+                    ditto_font_size=ditto_size,ditto_bold=self.ditto_bold.get(),
+                    ditto_alignment=alignment,ditto_keep_adult=self.ditto_keep_adult.get(),
+                    serial_superscript=self.serial_superscript.get(),serial_font_size=serial_size,serial_colors=serial_colors)
                 ps.validate_settings(candidate)
             if scope!='print':
                 candidate.update(database_path=self.db.get().strip(),output_directory=self.output_dir.get().strip(),
@@ -433,7 +454,7 @@ class App:
         if result.get('capacity_error'):
             reason=result['capacity_error'];self.export_error(reason)
             fixed=result['retry'][4].get('fixed_20_rows',True)
-            format_note='強制輸出維持 A4 直式、每頁20列，檢驗項目不拆成續頁；Glucose AC 填入格依設定放在頁首。生化區最多三小列。' if fixed else '自動列高仍無法容納這筆內容；強制輸出會縮字，讓單筆完整放入 A4 頁面，不拆成續列。'
+            format_note='強制輸出維持 A4 直式、每頁20列，檢驗項目不拆成續頁；Glucose AC&PC 填入格依設定放在頁首。生化區最多三小列。' if fixed else '自動列高仍無法容納這筆內容；強制輸出會縮字，讓單筆完整放入 A4 頁面，不拆成續列。'
             if messagebox.askyesno('版面空間不足，是否強制輸出？',reason+'\n\n'+format_note+'\n必要時會繼續縮小字體、縮短結果空白，保留全部檢驗項目；調整過的工作號會標紅，請逐筆核對。\n\n是否強制輸出本次工作簿？',parent=self.root,default='no'):
                 data,rows,day,target,settings=result['retry']
                 forced_settings=copy.deepcopy(settings);forced_settings['force_export']=True
@@ -455,7 +476,7 @@ class App:
             if len(affected)>10:review+=f" 等 {len(affected)} 列（詳見 PDF 紅字及工作進度檔）"
         extra=''
         if s.get('glucose_ac',{}).get('enabled'):
-            sheet=s['glucose_ac'];extra=f"\n\n頁首 Glucose AC 填入格：{sheet['records']} 筆 · 5 列 × 5 欄 · 每 25 格接下頁"
+            sheet=s['glucose_ac'];extra=f"\n\n頁首 Glucose AC&PC 填入格：{sheet['records']} 筆 · 5 列 × 5 欄 · 每 25 格接下頁"
         self.result_text.set(f"{s.get('order_mode','拆單')} · {s.get('input_orders',s['records'])} 張單 → {s['records']} 列 · {s['pages']} 頁{review}\n\n{self.last_pdf}{extra}");self.open_button.config(state='normal')
         self.open_pdf()
     def open_pdf(self):

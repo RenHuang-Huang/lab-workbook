@@ -5,8 +5,12 @@ from .errors import LayoutCapacityError
 SYMBOL='〃'
 
 
-def bio_signature(row,layout):
-    items=row['zones']['bio']
+def is_adult(item):
+    return str(item.get('label','')).strip()=='@'
+
+
+def bio_signature(row,layout,keep_adult=True):
+    items=[item for item in row['zones']['bio'] if not (keep_adult and is_adult(item))]
     if not items or any(i.get('machines') or i.get('machine') for i in items):return None
     try:groups=sr.arrange(items,'生化／糞便',layout)
     except LayoutCapacityError:return None
@@ -29,7 +33,7 @@ def plan(slots,settings,layout,page_starts=None):
         flags={'bio':False,'patient':False}
         if row is None:
             previous=None;previous_bio=None;out.append(flags);continue
-        signature=bio_signature(row,layout) if settings.get('ditto_bio',True) else None
+        signature=bio_signature(row,layout,settings.get('ditto_keep_adult',True)) if settings.get('ditto_bio',True) else None
         if previous is not None:
             flags['bio']=signature is not None and signature==previous_bio
             key=patient_key(row)

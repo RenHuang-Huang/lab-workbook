@@ -1,4 +1,5 @@
 """Lossless emergency packing inside the existing row and zone boundaries."""
+from .print_style import measure_run,run_height
 def pack_segments(tokens,width,height,measure,max_lanes=5,start_size=10.5):
     size=start_size
     for attempt in range(180):
@@ -10,7 +11,7 @@ def pack_segments(tokens,width,height,measure,max_lanes=5,start_size=10.5):
             room=width-padding-(result_space if has_result else 0)
             groups=[[]];used=0
             for ch,color in chars:
-                cw=measure(ch,size)
+                cw=measure_run(measure,ch,size,color)
                 # Prefer intact test names at a slightly smaller size. Split only
                 # unusually long names after exhausting normally readable sizes.
                 if size<6 and used+cw>room and groups[-1]:groups.append([]);used=0
@@ -21,12 +22,13 @@ def pack_segments(tokens,width,height,measure,max_lanes=5,start_size=10.5):
                 for ch,color in group:
                     if runs and runs[-1][1]==color:runs[-1]=(runs[-1][0]+ch,color)
                     else:runs.append((ch,color))
-                pieces.append({'runs':runs,'width':sum(measure(ch,size) for ch,_ in group)+reserve+padding,'result':reserve,'padding':padding})
+                pieces.append({'runs':runs,'width':sum(measure_run(measure,ch,size,ink) for ch,ink in group)+reserve+padding,'result':reserve,'padding':padding})
         lanes=[[]];used=0
         for piece in pieces:
             if used+piece['width']>width and lanes[-1]:lanes.append([]);used=0
             lanes[-1].append(piece);used+=piece['width']
-        if (len(lanes)<=max_lanes and size/72*25.4*1.22<=height/len(lanes)-.3
+        extent=max([size]+[run_height(segments,size) for segments,_ in tokens])
+        if (len(lanes)<=max_lanes and extent/72*25.4*1.22<=height/len(lanes)-.3
                 and all(p['width']<=width for p in pieces)):
             return size,lanes
         size*=.9

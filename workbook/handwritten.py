@@ -217,7 +217,7 @@ def display_work_numbers(row):
 def export(path,rows,date,settings,draft=False):
     from .font_settings import sizes as font_sizes
     fonts=font_sizes(settings)
-    from .print_style import Ink,validate_settings
+    from .print_style import Ink,validate_settings,serial_ink,serial_colors,run_size,run_rise,run_height,measure_run
     ditto_size=validate_settings(settings)
     from . import glucose_sheet
     ac_plan=glucose_sheet.header_plan(rows,settings)
@@ -247,6 +247,9 @@ def export(path,rows,date,settings,draft=False):
                     item['placement']=sr.default_placement(dict(kind='單項',label=item['label'],zone=zone,machine_group=item.get('machine')))
             if row.get('adult_health_flag'):
                 row['zones']['bio'].insert(0,dict(key='@',label='@',codes=[],machines=[],font_size=fonts['adult_health'],color=item_color(config,'@','@',row,settings,'生化／糞便'),placement=dict(print_enabled=True,subregion='A',position=1)))
+    for prepared_row in prepared:
+        for key,items in prepared_row['zones'].items():
+            for item in items:item['_serial_base_size']=fonts[key]
     slots=page_slots(prepared,date)
     from . import print_geometry,ditto,adaptive_layout as adaptive
     fixed_20=bool(settings.get('fixed_20_rows',True))
@@ -264,16 +267,15 @@ def export(path,rows,date,settings,draft=False):
         # Preserve taller glyphs in fixed columns, using moderate horizontal compression.
         return max(0,(typefaces.width(s,size)-min(.08,size/75)*max(0,len(str(s))-1))*.78/mm)
     def item_text(s,x,center,w,size=11,color=black):
-        if item_width(s,size)>w+.001:raise LayoutCapacityError('項目文字超出欄寬')
+        if measure_run(item_width,s,size,color)>w+.001:raise LayoutCapacityError('項目文字超出欄寬')
         if commands is not None:commands.append(('item',(s,x,center,w,size,color)));return
         c.saveState()
         ink=color if isinstance(color,Ink) else Ink(color)
         c.setFillColor(ink.color)
         t=c.beginText(x*mm,H-(center+size/mm*.32)*mm)
         # Explicit serial metadata keeps colored labels at the ordinary baseline.
-        serial=ink.serial
-        actual_size=size*.72 if serial else size
-        t.setRise(size*.28 if serial else 0)
+        actual_size=run_size(size,ink)
+        t.setRise(run_rise(size,ink))
         typefaces.write(t,s,actual_size,horizontal_scale=78,char_space=-min(.08,actual_size/75));c.drawText(t)
         c.restoreState()
     def text(s,x,center,w,size=8.5,color=black):
@@ -388,13 +390,13 @@ def export(path,rows,date,settings,draft=False):
                     machine=item.get('machine')
                     suffix=machine in suffix_groups
                     if seqtext and not suffix:
-                        item_text(seqtext,cursor+.5,center,reserve,size,Ink(blue if machine=='hba1c' else red,True))
+                        item_text(seqtext,cursor+.5,center,reserve,size,serial_ink(machine,settings,fonts[font_key]))
                     if seqtext:printed.add(machine)
                     start=cursor+.5+(0 if suffix else reserve);label_width=item_width(item['label'],size)
                     item_text(item['label'],start,center,label_width+.1,size)
                     end=start+label_width
                     if seqtext and suffix:
-                        item_text(seqtext,end+.7,center,reserve,size,Ink(blue if machine=='hba1c' else red,True))
+                        item_text(seqtext,end+.7,center,reserve,size,serial_ink(machine,settings,fonts[font_key]))
                         end+=.7+item_width(seqtext,size)
                     if results:line(end+.6,center+1.2,cursor+need-.6,center+1.2,'#C1C8CD',.25)
                     cursor+=need
@@ -407,7 +409,7 @@ def export(path,rows,date,settings,draft=False):
                 seqtext=str(current[machine+'_seq'])+('/' if machine=='mab' else '')
                 printed.add(machine)
             reserve=max(3.6,item_width(seqtext,size)+.5) if machine else 0
-            color=Ink(blue if machine=='hba1c' else red,True)
+            color=serial_ink(machine,settings,fonts[font_key]) if machine else Ink(black)
             suffix=machine in suffix_groups
             if suffix:reserve=(item_width(seqtext,size)+.7) if seqtext else 0
             start=x+.5+(0 if suffix else reserve)
@@ -449,13 +451,13 @@ def export(path,rows,date,settings,draft=False):
         runs=[(item['label'],Ink(item.get('color',black)))]
         for group in machines:
             number=str(current[group+'_seq'])+('/' if group=='mab' else '')
-            color=Ink(blue if group=='hba1c' else red,True)
+            color=serial_ink(group,settings,item.get('_serial_base_size',fonts['e411' if group=='e411' else 'other']))
             if item.get('panel'):
                 runs.append((' '+{'e411':'e411','hba1c':'HbA1c','mab':'mab'}[group]+' '+number,color))
             elif group=='e411':runs.insert(0,(number+' ',color))
             else:runs.append((' '+number,color))
         return runs,machines
-    def draw_subregions(items,key,x,w,y,tiny=False):
+    def draw_subregions(items,key,x,w,y,tiny=False,only_adult=False):
         from . import subregions as sr
         if not items:return
         zone=next(name for name,k in ZONE_KEYS.items() if k==key)
@@ -469,6 +471,7 @@ def export(path,rows,date,settings,draft=False):
         peak=max(max(p for p,_ in g['entries']) for g in groups)
         if key=='bio' and peak>3:raise LayoutCapacityError('生化區最多三小列')
         for group in groups:
+            if only_adult and not any(ditto.is_adult(item) for _,item in group['entries']):continue
             gx=x+cw*group['column']
             entries=group['entries'];opts=group['options'];single=len(entries)==1 and opts['display']=='single_max'
             lanes=peak
@@ -482,17 +485,27 @@ def export(path,rows,date,settings,draft=False):
                 has_result=bool(item.get('machines')) or key in ('e411','other')
                 reserve=min(3*scale,cw*.28) if has_result else 0
                 room=cw-padding-reserve
-                measured=sum(item_width(text,size) for text,_ in runs)
+                measured=sum(measure_run(item_width,text,size,ink) for text,ink in runs)
                 size=min(size,size*room/max(.001,measured))
-                planned.append((position,runs,machines,has_result,reserve))
+                planned.append((position,runs,machines,has_result,reserve,item))
+            # Measure the actual faces rather than reserve the full CJK box for
+            # ASCII serials. Keep adjacent lines and row boundaries separate.
+            extent=0
+            for _,runs,_,_,_,_ in planned:
+                for value,ink in runs:
+                    ascent,descent=typefaces.metrics(run_size(size,ink),value)
+                    rise=run_rise(size,ink)
+                    extent=max(extent,2*(ascent+rise-size*.32),2*(size*.32-descent-rise))
+            size*=min(1,max(.1,cellh-.2)*mm/max(.001,extent))
             if not tiny and size<readable_min-.001:raise LayoutCapacityError('子區域 '+group['letter']+' 空間不足，請調整簡稱、子區域或使用強制輸出')
             size=max(.05,size)
-            for position,runs,machines,has_result,reserve in planned:
+            for position,runs,machines,has_result,reserve,item in planned:
+                if only_adult and not ditto.is_adult(item):continue
                 center=y+rowh/2 if single else y+print_geometry.lane_center(position,lanes,rowh)
-                measured=sum(item_width(text,size) for text,_ in runs)
+                measured=sum(measure_run(item_width,text,size,ink) for text,ink in runs)
                 cursor=gx+(padding/2 if not single else (cw-measured-reserve)/2)
                 for value,color in runs:
-                    length=item_width(value,size);item_text(value,cursor,center,length+.001,size,color);cursor+=length
+                    length=measure_run(item_width,value,size,color);item_text(value,cursor,center,length+.001,size,color);cursor+=length
                 if has_result:line(cursor+padding*.4,center+min(1.2,cellh*.2),gx+cw-padding/2,center+min(1.2,cellh*.2),'#C1C8CD',.25)
                 printed.update(machines)
     def draw_patient(row,y,tiny=False):
@@ -535,18 +548,39 @@ def export(path,rows,date,settings,draft=False):
                     lanes=len(lines) if group['single'] else plan['lanes']
                     position=offset+1 if group['single'] else plan['starts'][piece['position']]+offset+1
                     center=block_top+print_geometry.lane_center(position,lanes,block_height)
-                    measured=sum(item_width(value,size) for value,_ in runs)
+                    measured=sum(measure_run(item_width,value,size,ink) for value,ink in runs)
                     reserve=piece['reserve'] if offset==len(lines)-1 else 0
                     cursor=gx+((cw-measured-reserve)/2 if group['single'] else padding/2)
                     for value,color in runs:
-                        length=item_width(value,size);item_text(value,cursor,center,length+.001,size,color);cursor+=length
+                        length=measure_run(item_width,value,size,color);item_text(value,cursor,center,length+.001,size,color);cursor+=length
                     if reserve:line(cursor+padding*.4,center+min(1.2,block_height/max(1,lanes)*.2),gx+cw-padding/2,center+min(1.2,block_height/max(1,lanes)*.2),'#C1C8CD',.25)
                 printed.update(piece['machines'])
     def draw_ditto(x,y,w,color=black):
-        fitted_text(ditto.SYMBOL,x,y+rowh/2,w,height_fit(ditto_size,rowh),color,bold=bool(settings.get('ditto_bold',False)))
+        size=height_fit(ditto_size,rowh);bold=bool(settings.get('ditto_bold',True))
+        actual=min(w,typefaces.width(ditto.SYMBOL,size,bold)/mm)
+        align=settings.get('ditto_alignment','center')
+        offset={'left':0,'center':(w-actual)/2,'right':w-actual}[align]
+        fitted_text(ditto.SYMBOL,x+offset,y+rowh/2,actual,size,color,bold=bold)
     def draw_bio_ditto(y):
         from .print_style import item_color
-        draw_ditto(xs[6]+.6,y,WIDTHS[6]-1.2,item_color(config,'DITTO','〃',current,settings,'生化／糞便'))
+        kept=[i for i in current['zones']['bio'] if settings.get('ditto_keep_adult',True) and ditto.is_adult(i)]
+        x=xs[6]+.6;w=WIDTHS[6]-1.2
+        if kept:
+            # Preserve the marker's normal position, face and size, then align
+            # the ditto in free horizontal space without covering the marker.
+            checkpoint=len(commands)
+            draw_subregions(current['zones']['bio'],'bio',xs[6],WIDTHS[6],y,only_adult=True)
+            occupied=[]
+            for kind,args in commands[checkpoint:]:
+                if kind=='item' and args[0]=='@':occupied.append((args[1],args[1]+args[3]+.8))
+            intervals=[];cursor=x
+            for left,right in sorted(occupied):
+                if left>cursor:intervals.append((cursor,left-cursor))
+                cursor=max(cursor,right)
+            if cursor<x+w:intervals.append((cursor,x+w-cursor))
+            if not intervals:raise LayoutCapacityError('@ 與同上符號沒有足夠空間')
+            x,w=max(intervals,key=lambda interval:interval[1])
+        draw_ditto(x,y,w,item_color(config,'DITTO','〃',current,settings,'生化／糞便'))
     def draw_packed(packed,x,w,y):
         size,lanes=packed
         for j,lane in enumerate(lanes):
@@ -554,7 +588,7 @@ def export(path,rows,date,settings,draft=False):
             for piece in lane:
                 position=cursor+piece['padding']/3
                 for value,color in piece['runs']:
-                    measured=item_width(value,size);item_text(value,position,center,measured+.01,size,color);position+=measured
+                    measured=measure_run(item_width,value,size,color);item_text(value,position,center,measured+.01,size,color);position+=measured
                 if piece['result']:line(position+min(.3,piece['result']*.2),center+.7,position+piece['result'],center+.7,'#C1C8CD',.25)
                 cursor+=piece['width']
     def compact_row(row,y,previous):
@@ -593,7 +627,7 @@ def export(path,rows,date,settings,draft=False):
                 machine=item.get('machine');segments=[(item['label'],black)]
                 if machine and machine not in printed:
                     serial=str(row[machine+'_seq'])+('/' if machine=='mab' else '')
-                    serial_color=Ink(blue if machine=='hba1c' else red,True)
+                    serial_color=serial_ink(machine,settings,fonts[key])
                     if machine in ('hba1c','mab'):segments.append((' '+serial,serial_color))
                     else:segments.insert(0,(serial+' ',serial_color))
                     printed.add(machine)
@@ -603,7 +637,7 @@ def export(path,rows,date,settings,draft=False):
         line(20,y+rowh,200,y+rowh,red,.6)
         return minimum_font(commands)
     def minimum_font(pending):
-        return min(args[4]*(.72 if kind=='item' and isinstance(args[5],Ink) and args[5].serial else 1)
+        return min(run_size(args[4],args[5]) if kind=='item' else args[4]
                    for kind,args in pending if kind in ('item','text','fit'))
     expanded_counts={4:0,5:0}
     try:
@@ -711,6 +745,10 @@ def export(path,rows,date,settings,draft=False):
             'forced_adjustments':adjustments,'forced_export':force,'font_sizes':fonts,'subregions_enabled':subregions_enabled,
             'sequences':{g:sum(bool(r[g+'_seq']) for r in prepared) for g in ('e411','hba1c','mab')},
             'subregion_columns':fixed_columns,'show_region_lines':bool(settings.get('show_region_lines',False)),
-            'machine_serial_style':'superscript','latin_font':typefaces.mono_family,
+            'machine_serial_style':'superscript' if settings.get('serial_superscript',False) else 'baseline',
+            'serial_font_size':float(settings.get('serial_font_size',14)),
+            'serial_colors':serial_colors(settings),
+            'ditto_alignment':settings.get('ditto_alignment','center'),'ditto_keep_adult':settings.get('ditto_keep_adult',True),
+            'latin_font':typefaces.mono_family,
             'ditto_rows':[dict(workno=row['workno'],department=row['department'],**flags)
                           for row,flags in zip(slots,ditto_flags) if row is not None and (flags['bio'] or flags['patient'])]}

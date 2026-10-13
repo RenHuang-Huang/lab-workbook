@@ -8,6 +8,8 @@ MERGED='#7042A6'
 BLUE='#215CAE'
 PALETTE={'自動':'','黑色':BLACK,'紅色':RED,'藍色':'#215CAE','紫色':MERGED,'深綠色':'#246B45'}
 ALL_ZONES='全部區域'
+DITTO_ALIGN={'left':'置左','center':'置中','right':'置右'}
+SERIAL_COLORS={'e411':RED,'hba1c':BLUE,'mab':RED}
 
 
 def default_color_rules():
@@ -43,6 +45,37 @@ def matching_color(settings,label,zone):
 class Ink:
     color: str
     serial: bool=False
+    font_size: float=14
+    reference_size: float=14
+    superscript: bool=False
+
+
+def serial_ink(group,settings,reference_size):
+    return Ink(serial_colors(settings)[group],True,float(settings.get('serial_font_size',14)),
+               reference_size,bool(settings.get('serial_superscript',False)))
+
+
+def serial_colors(settings):
+    values=settings.get('serial_colors',{})
+    if not isinstance(values,dict):raise ValueError('流水號顏色設定格式不正確。')
+    return {key:color(values.get(key,default)) for key,default in SERIAL_COLORS.items()}
+
+
+def run_size(size,ink):
+    return ink.font_size*min(1,size/max(.01,ink.reference_size)) if isinstance(ink,Ink) and ink.serial else size
+
+
+def run_rise(size,ink):
+    return run_size(size,ink)*.28 if isinstance(ink,Ink) and ink.serial and ink.superscript else 0
+
+
+def measure_run(measure,value,size,ink):
+    return measure(value,run_size(size,ink))
+
+
+def run_height(runs,size):
+    # Conservatively reserve taller serials and raised glyphs in every renderer.
+    return max([size]+[run_size(size,ink)+2*run_rise(size,ink) for _,ink in runs])
 
 def color(value):
     if not isinstance(value,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',value):
@@ -100,9 +133,15 @@ def validate_settings(settings):
     color_rules(settings)
     color(settings.get('merged_color',MERGED))
     try:
-        size=float(settings.get('ditto_font_size',14))
-        if not 6<=size<=24:raise ValueError
+        size=float(settings.get('ditto_font_size',20))
+        if isinstance(settings.get('ditto_font_size'),bool) or not 6<=size<=24:raise ValueError
     except (ValueError,TypeError):raise ValueError('同上符號字級請輸入 6～24 pt。') from None
-    for key in ('ditto_bold','merged_color_enabled'):
+    if settings.get('ditto_alignment','center') not in DITTO_ALIGN:raise ValueError('同上符號位置請選擇置左、置中或置右。')
+    try:
+        serial=float(settings.get('serial_font_size',14))
+        if isinstance(settings.get('serial_font_size'),bool) or not 6<=serial<=24:raise ValueError
+    except (ValueError,TypeError):raise ValueError('流水號字級請輸入 6～24 pt。') from None
+    serial_colors(settings)
+    for key in ('ditto_bold','merged_color_enabled','ditto_keep_adult','serial_superscript'):
         if key in settings and type(settings[key]) is not bool:raise ValueError('顏色及粗體開關必須為勾選值。')
     return size

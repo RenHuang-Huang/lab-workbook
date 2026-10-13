@@ -245,10 +245,11 @@ class ScrollBody:
     def reveal(self,widget):
         try:
             if not widget.winfo_exists() or not widget.winfo_ismapped():return
-            top=widget.winfo_rooty()-self.canvas.winfo_rooty();bottom=top+widget.winfo_height()
+            top=widget.winfo_rooty()-self.body.winfo_rooty();bottom=top+widget.winfo_height()
             height=self.canvas.winfo_height();total=max(1,self.body.winfo_height())
-            if top<8:self.canvas.yview_moveto(max(0,self.canvas.yview()[0]+(top-8)/total))
-            elif bottom>height-8:self.canvas.yview_moveto(self.canvas.yview()[0]+(bottom-height+8)/total)
+            start=self.canvas.canvasy(0)
+            if top<start+8:self.canvas.yview_moveto(max(0,(top-8)/total))
+            elif bottom>start+height-8:self.canvas.yview_moveto((bottom-height+8)/total)
         except tk.TclError:pass
 
 
@@ -482,7 +483,7 @@ def build_print(app):
     setting_row(body,'每張 A4 固定 20 筆',app.fixed_20_rows,'取消後，依內容加高每筆並自動換頁。')
     setting_row(body,'列印欄位標頭',app.show_headers,'在每頁顯示診所、工作號及各檢驗區標頭。')
     setting_row(body,'以淡灰線區隔列印區域',app.show_region_lines,'在檢驗區之間加入淡灰色分隔線。')
-    setting_row(body,'頁首加入 Glucose AC 填入格',app.export_glucose_ac,'5 列 × 5 欄，填寫線縮半並置中，直排接下頁。')
+    setting_row(body,'頁首加入 Glucose AC&PC 填入格',app.export_glucose_ac,'有 AC 或 PC 就列一格；兩項都有也只列一格。5 列 × 5 欄，直排接下頁。')
     body=section('欄位與分區')
     hint(body,'先設定各欄字體，再安排檢驗區內的子區域、空位遞補與自動起始區。')
     app.font_button=ttk.Button(body,text='列印字體設定',command=app.font_editor)
@@ -491,6 +492,23 @@ def build_print(app):
     app.subregion_button=ttk.Button(body,text='子區域與自動起始區',command=lambda:app.catalog_editor('subregions'))
     app.subregion_button.pack(fill='x',pady=(12,8))
     hint(body,'設定子區域的顯示方式、空區與位置遞補，以及生化自動項目的起始區。')
+    from . import print_style as ps
+    ttk.Separator(body).pack(fill='x',pady=(16,12))
+    ttk.Label(body,text='機器流水號',style='CardTitle.TLabel').pack(anchor='w')
+    setting_row(body,'流水號使用上標',app.serial_superscript,'未勾選時，流水號與項目名稱使用相同基準線。')
+    row=ttk.Frame(body,style='Card.TFrame');row.pack(fill='x',pady=8)
+    ttk.Label(row,text='流水號字級',style='Card.TLabel').pack(side='left')
+    app.serial_size_input=ttk.Spinbox(row,from_=6,to=24,increment=.5,width=5,textvariable=app.serial_font_size)
+    app.serial_size_input.pack(side='left',padx=8);ttk.Label(row,text='pt',style='Card.TLabel').pack(side='left')
+    colors=ttk.Frame(body,style='Card.TFrame');colors.pack(fill='x',pady=4);colors.columnconfigure(1,weight=1)
+    app.serial_color_inputs={}
+    for index,(key,title) in enumerate((('e411','e411'),('hba1c','HbA1c'),('mab','mab'))):
+        ttk.Label(colors,text=title+' 流水號顏色',style='Card.TLabel').grid(row=index,column=0,sticky='w',padx=(0,12),pady=5)
+        values=[name for name in ps.PALETTE if name!='自動']
+        if app.serial_colors[key].get() not in values:values.append(app.serial_colors[key].get())
+        entry=ttk.Combobox(colors,textvariable=app.serial_colors[key],values=values,state='readonly',width=12)
+        entry.grid(row=index,column=1,sticky='ew',pady=5);app.serial_color_inputs[key]=entry
+    hint(body,'字級為目標大小；空間不足時配合該格縮小。項目文字的配色規則不影響流水號。')
     body=section('併單與同上符號')
     hint(body,'決定哪些原單獨立保留，以及連續資料重複時如何顯示。')
     ttk.Label(body,text='併單排除',style='CardTitle.TLabel').pack(anchor='w',pady=(8,0))
@@ -502,11 +520,16 @@ def build_print(app):
     ttk.Label(body,text='重複內容顯示',style='CardTitle.TLabel').pack(anchor='w',pady=(20,0))
     setting_row(body,'同頁生化／糞便相同時印「〃」',app.ditto_bio,'與前一筆的生化內容完全相同時使用。')
     setting_row(body,'同頁同病患姓名印「〃」',app.ditto_patient,'性別、病歷號留白；就醫日期與保險註記保留。')
+    setting_row(body,'同上符號保留 @',app.ditto_keep_adult,'@ 不參與生化同上比對，且有 @ 時仍顯示；只有 @ 時不加同上符號。')
     row=ttk.Frame(body,style='Card.TFrame');row.pack(anchor='w',pady=(8,0))
     ttk.Label(row,text='符號字級',style='Card.TLabel').pack(side='left')
     app.ditto_size_input=ttk.Spinbox(row,from_=6,to=24,increment=.5,width=5,textvariable=app.ditto_font_size)
     app.ditto_size_input.pack(side='left',padx=8);ttk.Label(row,text='pt',style='Card.TLabel').pack(side='left')
     ttk.Checkbutton(row,text='加粗',variable=app.ditto_bold,style='Card.TCheckbutton').pack(side='left',padx=(16,0))
+    row=ttk.Frame(body,style='Card.TFrame');row.pack(anchor='w',pady=(12,0))
+    ttk.Label(row,text='符號位置',style='Card.TLabel').pack(side='left')
+    app.ditto_alignment_input=ttk.Combobox(row,textvariable=app.ditto_alignment,values=list(ps.DITTO_ALIGN.values()),state='readonly',width=9)
+    app.ditto_alignment_input.pack(side='left',padx=8)
     from . import print_style as ps
     body=section('併單來源配色')
     hint(body,'同一筆併單內，依項目來自第幾張原始檢驗單設定顏色。')

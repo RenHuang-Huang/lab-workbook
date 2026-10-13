@@ -78,7 +78,7 @@ class UpgradeTests(unittest.TestCase):
     def test_missing_new_option_gets_default_but_saved_false_survives(self):
         del self.settings['ditto_bold'];self.write_old();cs.ensure_configuration(self.old)
         actual=cs.read_bundle(self.old)['settings']
-        self.assertFalse(actual['ditto_bold']);self.assertFalse(actual['fixed_20_rows'])
+        self.assertTrue(actual['ditto_bold']);self.assertFalse(actual['fixed_20_rows'])
 
     def test_repeated_upgrade_does_not_shift_bio_or_rewrite_user_files(self):
         from workbook.catalog_settings import set_override
