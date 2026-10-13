@@ -4,12 +4,12 @@ from .errors import LayoutCapacityError
 
 LETTERS=tuple('ABCDEFGHI')
 MODES={'normal':'正常顯示','single_max':'只有一個項目時置中、字體最大'}
-PRINT_STATES=('是','否','跨區列印子項')
+PRINT_STATES=('是','否')
 
 
 def print_state(value):
     if not value.get('print_enabled',False):return '否'
-    return '跨區列印子項' if value.get('print_mode')=='cross_zone' else '是'
+    return '是'
 
 ZONE_KEYS={'生化／糞便':'bio','CBC／尿液':'cbc','外送':'sendout','e411':'e411','其他':'other'}
 BIO_GROUPS={

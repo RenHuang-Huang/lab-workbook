@@ -10,7 +10,7 @@ SYSTEM_KEYS = ('database_path', 'output_directory', 'order_mode', 'merge_workno_
 PRINT_DIR = 'print_settings'
 PRINT_FILES = ('settings.json', 'layout_settings.json', 'catalog.json')
 # Bump when normalization/migration semantics change independently of APP_VERSION.
-NORMALIZATION_VERSION = 1
+NORMALIZATION_VERSION = 2
 
 
 def read(path):
@@ -102,6 +102,8 @@ def normalize(settings, layout, catalog=None):
         layout, _ = source_panels.transfer(layout, usable)
         layout = subregions.migrate(layout, catalog_settings.records(usable, result, layout))
         layout = subregions.apply_bio_groups(layout, catalog_settings.records(usable, result, layout))
+        from .panel_children import migrate as migrate_children
+        layout = migrate_children(layout,usable,result)
         catalog = cc.build(catalog['raw_catalog'], result, layout, catalog.get('source', {}))
         catalog['normalization_version'] = NORMALIZATION_VERSION
     else:

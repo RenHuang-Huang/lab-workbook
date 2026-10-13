@@ -36,8 +36,13 @@ def merge_rows(data,settings):
                 for panel in row.get('verified_panels',[]):
                     if (panel.get('name') or '').strip().startswith(('成健','不報成健')):adult_codes.update(panel['members'])
             source=(row['department'],row['workno'])
+            registered={str(d['LCHK_ITEM']) for d in raw_details[source] if d['LCHK_ITEMTYPE']=='G'}
             for d in raw_details[source]:
-                key=(d['LCHK_ITEMTYPE'],d['LCHK_ITEM'])
+                d=copy.deepcopy(d)
+                if 'LCHK_MKEY' in d:
+                    raw_parent=str(d.get('LCHK_MKEY') or '').strip()
+                    d['_parent_panel']=raw_parent if raw_parent in registered else ''
+                key=(d['LCHK_ITEMTYPE'],d['LCHK_ITEM'],'_parent_panel' in d,d.get('_parent_panel',''))
                 if len(group)==1:
                     merged['details'].append(copy.deepcopy(d));continue
                 if key not in by_item:

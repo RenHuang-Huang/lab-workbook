@@ -194,7 +194,7 @@ def self_test(destination):
             assert len(win.catalog_tabs.tabs())==3
             table=win.catalog_pages['items'].table
             assert len(table.filters)==12 and 'updated_display' in table.filters
-            assert str(table.tree.cget('show'))==''
+            assert 'tree' in str(table.tree.cget('show')) and 'headings' not in str(table.tree.cget('show'))
             assert all(hasattr(app,name) for name in ('catalog_import_button','catalog_export_button','catalog_update_button'))
             assert '套組、單項、診所設定' in labels(root)
             edit_page=win.catalog_pages['items'];original_labels={}
@@ -210,7 +210,7 @@ def self_test(destination):
                 index=next(i for i,r in enumerate(table.rows) if r['key']==key)
                 table.tree.selection_set(str(index));root.update();edit_page.label.set(label)
             assert not win.batch.drafts.changes
-            assert {r['kind'] for r in table.rows}<={'單項','套組'}
+            assert {r['kind'] for r in table.rows}<={'單項','套組','套組子項'}
             assert not any(r['key'].startswith('PRINT:') for r in table.rows)
             table.filters['kind'].set('單項');table.filters['zone'].set('e411');root.update()
             assert table.tree.get_children()
@@ -219,13 +219,17 @@ def self_test(destination):
             table.clear_filters();table.query.set('LOOKUP');root.update()
             table.tree.selection_set(table.tree.get_children()[0]);root.update()
             page=win.catalog_pages['items'];page.members_button.invoke();root.update()
-            assert page.members_window.summary_var.get()=='共 2 筆子項（2 個不同代碼）'
-            assert page.members_window.member_table.rows[1]['code']=='UNKNOWN'
-            page.members_window.destroy()
-            assert list(page.panel_print_box['values'])==['是','否','跨區列印子項']
-            page.panel_print.set('跨區列印子項');page.print_changed();root.update()
-            _,cross_layout=win.batch.drafts.prepare(app.settings,ls.load())
-            assert cross_layout['placements']['G:LOOKUP']['print_mode']=='cross_zone'
+            parent_id=table.tree.selection()[0]
+            assert len(table.tree.get_children(parent_id))==2
+            assert table.tree.item(parent_id,'open')
+            assert list(page.panel_print_box['values'])==['是','否']
+            child_id=table.tree.get_children(parent_id)[0]
+            table.tree.selection_set(child_id);root.update()
+            assert page.selected['kind']=='套組子項'
+            prior_child=page.print_enabled.get();page.print_enabled.set(not prior_child);root.update()
+            _,child_layout=win.batch.drafts.prepare(app.settings,ls.load())
+            assert child_layout['panel_children']['G:LOOKUP'][page.selected['code']]==(not prior_child)
+            assert table.tree.item(child_id,'tags')==('dirty',)
             win.batch.drafts.changes.clear()
             win.destroy()
             assert '子區域與自動起始區' in labels(root)

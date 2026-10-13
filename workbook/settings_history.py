@@ -48,6 +48,10 @@ def stamp_items(old_settings, old_layout, settings, layout, catalog, preserve_da
             if key not in result:
                 result[key]=(s.get('rules',{}).get(key),l.get('placements',{}).get(key),l.get('code_colors',{}).get(key),
                     [r for r in l.get('rules',[]) if key in r.get('codes',[])])
+        from .panel_children import key as child_key
+        for panel,children in l.get('panel_children',{}).items():
+            result[panel]=[result.get(panel),children]
+            for code,enabled in children.items():result[child_key(panel,code)]=enabled
         return result
     before=states(old_settings,old_layout);after=states(settings,layout);stamp=now()
     result=stamp_file(old_layout,layout,stamp);dates=copy.deepcopy(old_layout.get('item_updated_at',{}))

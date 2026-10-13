@@ -21,7 +21,7 @@ def records(catalog,settings,layout):
         else:zone='生化／糞便'
         if rule:label,zone=rule['label'],rule['zone']
         else:label=SHORT.get(label,label)
-        rows.append(dict(key=code,kind='單項',code=code,nhi=item.get('LCI_NHICODE') or '',name=item.get('LCI_NAME') or item.get('LCI_NAMEC') or '',label=label,zone=NO_PRINT if group=='aux' else zone,print_zone=zone,machine_group=group,group=MACHINE_NAMES[group],note='已列印套組內，有流水號分組的子項仍獨立列印。',search=' '.join(str(item.get(k) or '') for k in ('LCI_NAME','LCI_NAMEC','LCI_NAMES'))))
+        rows.append(dict(key=code,kind='單項',code=code,nhi=item.get('LCI_NHICODE') or '',name=item.get('LCI_NAME') or item.get('LCI_NAMEC') or '',label=label,zone=NO_PRINT if group=='aux' else zone,print_zone=zone,machine_group=group,group=MACHINE_NAMES[group],note='此處設定獨立單項；套組內是否列印請展開該套組設定。',search=' '.join(str(item.get(k) or '') for k in ('LCI_NAME','LCI_NAMEC','LCI_NAMES'))))
     for panel in catalog['sets']:
         code=str(panel['LCS_ID']);key='G:'+code
         rule=next((r for r in layout['rules'] if r['enabled'] and key in r['codes']),None)
@@ -40,7 +40,7 @@ def records(catalog,settings,layout):
         from .settings_history import display
         row['updated_at']=layout.get('item_updated_at',{}).get(row['key'])
         row['updated_display']=display(row['updated_at']) or '尚無紀錄'
-        if row['kind']=='套組':row['note']='適用院所：'+str(row['clinic_code'] or '全部')+'；是：印套組，取代一般子項。否：依子項設定展開。跨區列印子項：印套組，另保留不同列印區域且啟用的子項。有流水號的子項仍獨立列印。'
+        if row['kind']=='套組':row['note']='適用院所：'+str(row['clinic_code'] or '全部')+'；此列設定套組名稱是否列印；展開階層後可獨立設定本套組的子項。名稱與子項分別控制，不影響獨立單項。'
         if row['color_rule_applied']:row['note']+='；已套用列印代碼配色規則，優先於個別代碼顏色。'
     return rows
 
@@ -58,10 +58,9 @@ def edit_item(settings,layout,record,label,zone,group=None,*,print_enabled=None,
     mode=position_mode if position_mode is not None else record.get('position_mode','slot')
     if mode not in ('slot','order'):raise ValueError('位置模式不正確。')
     single=record['kind']=='單項';old_group=record.get('machine_group')
-    cross_zone=record.get('print_mode')=='cross_zone'
     if isinstance(print_enabled,str):
-        if single or print_enabled not in sr.PRINT_STATES:raise ValueError('套組列印請選是、否或跨區列印子項。')
-        cross_zone=print_enabled=='跨區列印子項';print_enabled=print_enabled!='否'
+        if single or print_enabled not in sr.PRINT_STATES:raise ValueError('套組列印請選是或否。')
+        print_enabled=print_enabled!='否'
     if single:
         if group not in MACHINE_NAMES:raise ValueError('請選擇流水號分組。')
         if group=='aux':
@@ -86,7 +85,6 @@ def edit_item(settings,layout,record,label,zone,group=None,*,print_enabled=None,
         if single and print_enabled and group=='aux':raise ValueError('計算／行政項目若要列印，請先改為「不編流水號」或指定流水號分組。')
         values=dict(print_enabled=print_enabled,subregion=subregion if subregion is not None else record.get('subregion',''),
                     position=record.get('position') if position is ... else position)
-        if not single and print_enabled and cross_zone:values['print_mode']='cross_zone'
         if mode=='order':values['position_mode']='order'
         if values!={k:record.get(k) for k in values} or layout.get('version',2)>=3:
             updated=sr.migrate(updated,[record]);updated['placements'][record['key']]=values;ls.validate(updated)
@@ -110,6 +108,9 @@ def editor(parent,catalog,settings,initial='items',resolved_rows=None,on_save=No
     if not data.get('bio_adult_slot') or not data.get('bio_groups_version'):
         data=sr.migrate(data,records(catalog,settings,data))
         data=sr.apply_bio_groups(data,records(catalog,settings,data));ls.save(data);resolved_rows=None
+    from .panel_children import migrate as migrate_children
+    migrated=migrate_children(data,catalog,settings)
+    if migrated!=data:data=migrated;ls.save(data);resolved_rows=None
     win=tk.Toplevel(parent);win.title('列印設定');win.geometry('1200x810');win.minsize(940,680);win.transient(parent)
     cached_rows=copy.deepcopy(resolved_rows) if resolved_rows is not None else records(catalog,settings,data)
     def save(candidate,layout):
@@ -179,14 +180,18 @@ class CatalogPage:
             ranked=ttk.Frame(form);ranked.grid(row=4,column=0,columnspan=3,sticky='ew',pady=(4,0))
             self.rank_check=ttk.Checkbutton(ranked,text='位置作為排列順位',variable=self.ranked,command=self.position_choices);self.rank_check.pack(side='left')
             help_icon(ranked,'排列順位可選 1～10 或自動；依實際項目排序，滿了往下一欄補位。所有區域固定位置皆為 1～3，同位順延。').pack(side='left',padx=4)
-            self.members_button=ttk.Button(ranked,text='查看套組子項',style='Table.TButton',command=self.show_members,state='disabled');self.members_button.pack(side='right')
+            self.members_button=ttk.Button(ranked,text='展開套組子項',style='Table.TButton',command=self.show_members,state='disabled');self.members_button.pack(side='right')
+            self.child_buttons=[]
+            for value,title in [(False,'子項全部不印'),(True,'子項全部列印')]:
+                button=ttk.Button(ranked,text=title,style='Table.TButton',command=lambda v=value:self.set_children(v),state='disabled')
+                button.pack(side='right',padx=4);self.child_buttons.append(button)
         form.bind('<Configure>',lambda e:self.info_label.configure(wraplength=max(300,e.width-60)))
         self.zone_box.bind('<<ComboboxSelected>>',self.zone_changed)
         self.group_box.bind('<<ComboboxSelected>>',self.group_changed)
         columns=[('code','診所代碼',135),('name','診所名稱',360),('label','列印簡稱',260)] if self.clinics else [
-            ('kind','類型',100),('code','系統／套組代碼',140),('nhi','健保代碼',120),('name','項目名稱',235),
+            ('kind','類型',135),('code','系統／套組代碼',140),('nhi','健保代碼',120),('name','項目名稱',235),
             ('print_state','是否列印',155),('zone','列印區域',150),('subregion_display','子區域',100),('position_display','位置',85),('label','列印代碼／簡稱',170),('color_display','代碼顏色',120),('group','流水號分組',180),('updated_display','最後更新',190)]
-        self.table=CatalogTable(page,columns,self.pick)
+        self.table=CatalogTable(page,columns,self.pick,hierarchy=not self.clinics)
         for var in (self.label,self.zone,self.group,self.print_enabled,self.panel_print,self.subregion,self.position,self.ranked,self.code_color):var.trace_add('write',self.changed)
         self.refresh()
 
@@ -194,7 +199,7 @@ class CatalogPage:
     def values(record,clinics=False):
         if clinics:return dict(label=record['label'])
         return dict(label=record['label'],zone=record['zone'],group=record['group'],print_enabled=sr.print_state(record) if record['kind']=='套組' else record['print_enabled'],
-            subregion=record['subregion_display'],position=str(record['position']) if record['position'] else '自動',
+            subregion=record.get('subregion_display','自動'),position=str(record['position']) if record.get('position') else '自動',
             position_mode=record.get('position_mode','slot'),code_color=ps.title(record.get('code_color','')))
 
     @staticmethod
@@ -204,10 +209,12 @@ class CatalogPage:
         if self.clinics:
             rows=[dict(key=str(h['HOS_ID']),code=str(h['HOS_ID']),name=h.get('HOS_NAME') or '',
                   label=self.data.get('clinic_aliases',{}).get(str(h['HOS_ID']),(h.get('HOS_NAME') or str(h['HOS_ID'])).replace('診所','').strip())) for h in self.catalog['hospitals']]
-        else:rows=copy.deepcopy(self.get_rows())
+        else:
+            from .panel_children import tree_rows
+            rows=tree_rows(self.get_rows(),self.catalog,self.settings,self.data)
         self.base_rows={self.identity(r):copy.deepcopy(r) for r in rows}
         for row in rows:
-            edit=self.batch.drafts.get(self.mode,row['key'])
+            edit=self.batch.drafts.get(self.row_mode(row),row['key'])
             if edit:row.update(self.project(edit['after']));row['_dirty']=True
         self.table.set_rows(rows)
 
@@ -215,15 +222,17 @@ class CatalogPage:
         self.loading=True
         try:
             self.selected=self.base_rows.get(self.identity(record)) if record else None
-            if not self.clinics:self.members_button.configure(state='normal' if record and record.get('kind')=='套組' else 'disabled')
+            if not self.clinics:
+                for button in [self.members_button,*self.child_buttons]:button.configure(state='normal' if record and record.get('kind')=='套組' else 'disabled')
             if record is None:
                 self.info.set('請先選擇一筆');self.label.set('');self.zone.set('');self.group.set('')
                 controls=[self.label_entry,self.zone_box,self.group_box]
                 if not self.clinics:controls += [self.print_check,self.panel_print_box,self.subregion_box,self.position_box,self.rank_check,self.color_box,self.color_button]
                 for widget in controls:widget.configure(state='disabled')
                 return
-            edit=self.batch.drafts.get(self.mode,record['key'])
-            values=edit['after'] if edit else self.values(self.selected,self.clinics)
+            edit=self.batch.drafts.get(self.row_mode(record),record['key'])
+            values=self.values(self.selected,self.clinics)
+            if edit:values.update(edit['after'])
             self.info.set(str(record['code'])+'  '+record['name']);self.label.set(values['label']);self.label_entry.configure(state='normal')
             if self.clinics:return
             self.zone.set(values['zone']);self.group.set(values['group'])
@@ -238,10 +247,14 @@ class CatalogPage:
             self.group_box.configure(state='readonly' if record['kind']=='單項' else 'disabled')
             self.label_entry.configure(state='disabled' if record['kind']=='套組' and values['zone']==MEMBER_ZONE else 'normal')
             self.position_choices()
+            if record['kind']=='套組子項':
+                self.info.set(f"{record['panel_key'][2:]} {record['panel_name']} → {record['code']} {record['name']}（只影響此套組）")
+                for widget in (self.label_entry,self.zone_box,self.group_box,self.subregion_box,self.position_box,self.rank_check,self.color_box,self.color_button):widget.configure(state='disabled')
         finally:self.loading=False
 
     def project(self,values):
         if self.clinics:return dict(label=values['label'])
+        if set(values)=={'print_enabled'}:return dict(print_enabled=values['print_enabled'],print_state='是' if values['print_enabled'] else '否')
         try:color_display=ps.title(ps.matching_color(self.settings,values['label'],values['zone']) or ps.choice(values['code_color'])) or '自動'
         except ValueError:color_display=values['code_color']
         state=values['print_enabled'] if isinstance(values['print_enabled'],str) else '是' if values['print_enabled'] else '否'
@@ -254,16 +267,29 @@ class CatalogPage:
         after=dict(label=self.label.get())
         if not self.clinics:after.update(zone=self.zone.get(),group=self.group.get(),print_enabled=self.panel_print.get() if record['kind']=='套組' else self.print_enabled.get(),
             subregion=self.subregion.get(),position=self.position.get(),position_mode='order' if self.ranked.get() else 'slot',code_color=self.code_color.get())
-        self.batch.drafts.put(self.mode,record,self.values(record,self.clinics),after)
-        self.table.update_rows(record['key'],self.project(after),bool(self.batch.drafts.get(self.mode,record['key'])))
+        before=self.values(record,self.clinics);mode=self.row_mode(record)
+        if mode=='panel_children':before=dict(print_enabled=before['print_enabled']);after=dict(print_enabled=self.print_enabled.get())
+        self.batch.drafts.put(mode,record,before,after)
+        self.table.update_rows(record['key'],self.project(after),bool(self.batch.drafts.get(mode,record['key'])))
         self.batch.changed()
 
     def show_members(self):
         if not self.selected or self.selected.get('kind')!='套組':return
-        from .catalog_members import show
-        old=getattr(self,'members_window',None)
-        if old is not None and old.winfo_exists():old.destroy()
-        self.members_window=show(self.page,self.selected,self.catalog,self.get_rows())
+        selected=self.table.tree.selection()
+        if selected:
+            self.table.tree.item(selected[0],open=True)
+            self.info.set(f"{self.selected['code']} {self.selected['name']} · 共 {len(self.table.tree.get_children(selected[0]))} 個子項；選擇子項即可勾選是否列印。")
+
+    def row_mode(self,record):return 'panel_children' if record.get('kind')=='套組子項' else self.mode
+
+    def set_children(self,value):
+        if not self.selected or self.selected.get('kind')!='套組':return
+        for record in self.base_rows.values():
+            if record.get('panel_key')!=self.selected['key']:continue
+            after=dict(print_enabled=value)
+            self.batch.drafts.put('panel_children',record,dict(print_enabled=record['print_enabled']),after)
+            self.table.update_rows(record['key'],self.project(after),bool(self.batch.drafts.get('panel_children',record['key'])))
+        self.batch.changed();self.show_members()
 
     def choose_color(self):
         from tkinter.colorchooser import askcolor
@@ -283,6 +309,7 @@ class CatalogPage:
 
     def print_changed(self):
         if not self.selected:return
+        if self.selected['kind']=='套組子項':return
         if (self.panel_print.get()!='否' if self.selected['kind']=='套組' else self.print_enabled.get()):
             if self.selected['kind']=='套組' and self.zone.get()==MEMBER_ZONE:
                 self.zone.set('生化／糞便');self.label_entry.configure(state='normal');self.label.set(self.selected['name'])

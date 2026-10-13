@@ -32,6 +32,8 @@ def synthetic_demo():
     data['sets']=[dict(LCS_ID='0051',LCS_NAME='人工CBC套組',LCS_UNIKEY='DEMO_CBC',LCS_HOSPITAL='DEMO')]
     data['set_members']=[dict(LCS_UNIKEY='DEMO_CBC',LCS_ITEM=c,LCS_SERIAL=i) for i,c in enumerate(blood)]
     data['details'].append(dict(LCHK_DEPT='DEMO',LCHK_WORKNO='00012',LCHK_ITEM='0051',LCHK_ITEMTYPE='G',LCHK_ITEMSER=100))
+    for detail in data['details']:
+        detail['LCHK_MKEY']='0051' if detail['LCHK_WORKNO']=='00012' and detail['LCHK_ITEM'] in blood else ''
     return data
 
 def main():

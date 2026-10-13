@@ -65,12 +65,7 @@ def result_text(detail):
 
 
 def build_result(data, number, settings, layout):
-    """Hierarchy uses dictionary membership, never assumes historical parent keys.
-
-    A shared member can appear under several panels, labelled as shared; counts
-    are of original detail records. Missing dictionary members have no result.
-    Exact clinic definitions take precedence, then 9999, as in make_rows().
-    """
+    """Use same-order parent keys when present, with legacy snapshot fallback."""
     from .catalog_settings import records
     _, number = validate_query(data['date'], number)
     headers = {source_key(h): h for h in data['headers']}
@@ -140,22 +135,32 @@ def build_result(data, number, settings, layout):
             for d, rule, known, entries in panels:
                 node = item_node(d, rule, '套組')
                 present = 0
-                for member in entries:
+                linked=[x for x in singles if 'LCHK_MKEY' in x and text(x.get('LCHK_MKEY'))==text(d['LCHK_ITEM'])]
+                entry_codes={text(m['LCS_ITEM']) for m in entries}
+                display_entries=list(entries)+[{'LCS_ITEM':c} for c in dict.fromkeys(text(x['LCHK_ITEM']) for x in linked) if c not in entry_codes]
+                for member in display_entries:
                     code = text(member['LCS_ITEM']); member_rule = single_rules.get(code, {})
                     actual = by_code.get(code, [])
+                    actual=[x for x in actual if 'LCHK_MKEY' not in x or text(x.get('LCHK_MKEY'))==text(d['LCHK_ITEM'])]
                     for detail in actual:
-                        status = '同單共用子項' if shared[code] > 1 else '已登錄'
+                        status = '已確認套組來源' if 'LCHK_MKEY' in detail else '同單共用子項' if shared[code] > 1 else '已登錄'
                         if detail.get('LCHK_ITEMTYPE') != 'I':
                             status += '；來源類型待核對'
                         child = item_node(detail, member_rule,
                             status=status)
+                        if layout.get('panel_children_version') and rule:
+                            from .panel_children import enabled,same_label
+                            visible=enabled(layout,rule['key'],dict(member_rule,code=code,label=member_rule.get('label',code)))
+                            child['print_state']='是' if visible else '否'
+                            if not visible and rule.get('print_enabled') and member_rule.get('machine_group') in ('e411','hba1c','mab') and same_label(rule['label'],member_rule.get('label','')):
+                                child['status']+='；流水號印在套組名稱旁'
                         node['children'].append(child); assigned.add(id(detail))
                     if actual:
                         present += 1
                     else:
                         child = item_node({'LCHK_ITEM': code}, member_rule, status='當單未登錄')
                         child['result'] = '—';node['children'].append(child)
-                node['status'] = f'已登錄 {present}/{len(entries)} 子項' if known else '套組定義待核對'
+                node['status'] = f'已登錄 {present}/{len(display_entries)} 子項' if known else '套組定義待核對'
                 nodes.append(node)
             for detail in singles:
                 if id(detail) not in assigned:

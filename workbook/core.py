@@ -142,6 +142,12 @@ def make_rows(data,settings):
         # None distinguishes older snapshots that never queried the card-prefix flag.
         row['adult_health_flag']=(key in adult_keys) if 'adult_health' in data else None
         codes={d['LCHK_ITEM'] for d in singles}
+        registered={str(d['LCHK_ITEM']) for d in local if d['LCHK_ITEMTYPE']=='G'}
+        def parent_of(detail):
+            if '_parent_panel' in detail:return detail['_parent_panel']
+            value=str(detail.get('LCHK_MKEY') or '').strip()
+            return value if value in registered else ''
+        known_parents=all('LCHK_MKEY' in d or '_parent_panel' in d for d in singles)
         row['verified_panels']=[]
         row['ordered_panels']=[]
         row['unresolved_panels']=[]
@@ -153,10 +159,11 @@ def make_rows(data,settings):
             chosen=exact if exact else fallback if fallback else options
             if len(chosen)==1:
                 p=chosen[0];pcs=members[p['LCS_UNIKEY']]
+                present={x['LCHK_ITEM'] for x in singles if parent_of(x)==str(d['LCHK_ITEM'])} if known_parents else codes & pcs
                 row['ordered_panels'].append({'code':d['LCHK_ITEM'],'name':p['LCS_NAME'],
                     'source_orders':copy.deepcopy(d.get('source_orders') or [dict(department=key[0],workno=key[1])]),
-                    'present_members':sorted(codes & pcs),
-                    'missing_members':sorted(pcs-codes,key=str)})
+                    'present_members':sorted(present),
+                    'missing_members':sorted(pcs-present,key=str)})
                 if pcs and pcs<=codes:row['verified_panels'].append({'code':d['LCHK_ITEM'],'name':p['LCS_NAME'],'members':sorted(pcs)})
             else:row['unresolved_panels'].append(d['LCHK_ITEM'])
         cbc={'B02','B04','B10','B24','B38','B39','B40','B43'}
@@ -177,6 +184,7 @@ def make_rows(data,settings):
             rule=settings['rules'].get(code,{'group':'routine'})
             label=display_label(code,items,rule)
             row['source_items'].append({'code':code,'type':kind,'label':label,'name':items.get(code,{}).get('LCI_NAME') or '', 'namec':items.get(code,{}).get('LCI_NAMEC') or '',**({'source_orders':d['source_orders']} if 'source_orders' in d else {})})
+            row['source_items'][-1].update(parent_known='LCHK_MKEY' in d or '_parent_panel' in d,parent_panel=parent_of(d))
             if code in compressed:continue
             group=rule.get('group','routine')
             if group not in GROUPS:raise ValueError(f'項目 {code} 的分組設定不正確。')

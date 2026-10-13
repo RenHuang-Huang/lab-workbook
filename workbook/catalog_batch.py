@@ -35,6 +35,7 @@ class Drafts:
                     fields.append(f"  {FIELD_NAMES[field]}：{shown(edit['before'].get(field))} → {shown(value)}")
             if mode=='automatic':title='生化／糞便：自動起始區'
             elif mode=='subregions':title=f"{record['zone']} · 子區域 {record['subregion_display']}"
+            elif mode=='panel_children':title=f"套組 {record['panel_key'][2:]} {record['panel_name']} → 子項 {record['code']} {record['name']}"
             else:title=f"{record.get('kind','診所')} {record.get('code',key)}  {record.get('name','')}"
             lines.append(title+'\n'+'\n'.join(fields))
         return '\n\n'.join(lines)
@@ -49,6 +50,8 @@ class Drafts:
                     label=values['label'].strip()
                     if not label:raise ValueError('診所列印簡稱不可空白。')
                     updated.setdefault('clinic_aliases',{})[key]=label
+                elif mode=='panel_children':
+                    updated.setdefault('panel_children',{}).setdefault(record['panel_key'],{})[record['code']]=values['print_enabled']
                 elif mode=='items':
                     group=next((k for k,v in MACHINE_NAMES.items() if v==values['group']),None) if record['kind']=='單項' else None
                     # aux stays internal and nonprinting unless the user explicitly enables it.
@@ -112,7 +115,7 @@ class BatchEditor:
         if not self.drafts.changes:return True
         try:candidate,layout=self.drafts.prepare(self.settings,self.layout)
         except DraftError as error:
-            mode='subregions' if error.mode=='automatic' else error.mode
+            mode='subregions' if error.mode=='automatic' else 'items' if error.mode=='panel_children' else error.mode
             page=self.pages[mode];self.win.catalog_tabs.select(page.page)
             if error.mode!='automatic':
                 page.table.clear_filters()

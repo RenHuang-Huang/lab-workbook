@@ -37,6 +37,8 @@ def load():
     return json.loads(PATH.read_text(encoding='utf-8')) if PATH.exists() else defaults()
 
 def validate(data):
+    from .panel_children import validate as validate_children
+    validate_children(data)
     from .settings_history import validate as validate_history
     validate_history(data)
     from .subregions import validate as validate_positions

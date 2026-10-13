@@ -104,6 +104,10 @@ def build(catalog,settings,layout,source=None,resolved_rows=None):
         panel['machine_groups']=sorted({m['machine_group'] for m in panel['members'] if m['machine_group'] is not None})
         panel['missing_member_codes']=[m['code'] for m in panel['members'] if not m['found']]
         panel['member_count']=len(panel['members'])
+        from .panel_children import enabled as child_enabled,key as child_key
+        for member in panel['members']:
+            member['panel_print_enabled']=child_enabled(layout,panel['key'],dict(member,print_enabled=member.get('print_enabled') is not False))
+            member['panel_updated_at']=layout.get('item_updated_at',{}).get(child_key(panel['key'],str(member['code'])))
         if panel['name'].strip().startswith(('成健','不報成健')):
             panel['conditional_compression']='當筆IC旗標＋已驗證成健成員才合併為@'
     clinics=[dict(code=str(h['HOS_ID']),name=h['HOS_NAME'] or '',
@@ -184,7 +188,7 @@ def import_settings(document,current,catalog=None):
             if not isinstance(code,str) or not isinstance(label,str) or not label.strip():raise ValueError('診所簡稱格式不正確。')
             layout['clinic_aliases'][code]=label
         layout['code_colors']=copy.deepcopy(raw.get('code_colors',{}))
-        for key in ('updated_at','item_updated_at'):
+        for key in ('updated_at','item_updated_at','panel_children','panel_children_version'):
             if key in raw:layout[key]=copy.deepcopy(raw[key])
         for key in ('bio_auto_start','bio_groups_version'):
             if key in raw:layout[key]=copy.deepcopy(raw[key])
@@ -212,6 +216,9 @@ def import_settings(document,current,catalog=None):
         validate_history(candidate)
         from .print_style import color_rules
         candidate['print_color_rules']=color_rules(config if 'print_color_rules' in config else current)
+        if catalog is not None:
+            from .panel_children import migrate as migrate_children
+            usable,_=display_catalog(clean(catalog));layout=migrate_children(layout,usable,candidate)
         candidate.pop('layout',None)
         return candidate,layout
     except (KeyError,TypeError,AttributeError):raise ValueError('不是本程式可重用的 JSON 設定清單。') from None

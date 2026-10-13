@@ -19,6 +19,8 @@ def fixture():
     for code,label,zone,group in [('BB','BB','外送','routine'),('EE','sAg','e411','e411'),('HH','HbA1c','其他','hba1c'),('MM','mab','其他','mab')]:
         layout=cs.set_override(layout,code,label,zone);s['rules'][code]=dict(label=label,group=group)
         layout['placements'][code].update(subregion='A',position=None)
+    for detail in data['details']:
+        detail['LCHK_MKEY']='PACK' if detail['LCHK_ITEM'] in {'AA','BB','EE','HH','MM'} else ''
     s['layout']=sr.migrate(layout,cs.records(data,s,layout))
     return data,s
 
@@ -27,73 +29,6 @@ def mode(data,s,value):
     record=next(r for r in cs.records(data,s,s['layout']) if r['key']=='G:PACK')
     candidate,layout=cs.edit_item(s,s['layout'],record,record['label'],record['zone'],print_enabled=value)
     return dict(candidate,layout=layout)
-
-
-class PanelModeTests(unittest.TestCase):
-    def test_three_modes_and_serial_exception(self):
-        data,s=fixture();original=copy.deepcopy(data)
-        for value in sr.PRINT_STATES:
-            with self.subTest(value=value):
-                settings=mode(data,s,value);row=handwritten.prepare(core.make_rows(data,settings),settings)[0]
-                visible={t['key']:zone for zone,items in row['zones'].items() for t in items}
-                self.assertEqual('G:PACK' in visible,value!='否')
-                self.assertEqual('AA' in visible,value=='否')
-                self.assertEqual('BB' in visible,value!='是')
-                self.assertNotIn('MISSING',visible);self.assertIn('CC',visible)
-                self.assertEqual({k:visible[k] for k in ('EE','HH','MM')},{'EE':'e411','HH':'other','MM':'other'})
-                self.assertEqual([row[g+'_seq'] for g in ('e411','hba1c','mab')],[1,1,1])
-                if value=='跨區列印子項':
-                    self.assertEqual(visible['BB'],'sendout')
-                    self.assertEqual(row['panel_display'][0]['covered_codes'],['AA'])
-                    self.assertIn('BB',row['panel_display'][0]['cross_zone_member_codes'])
-        self.assertEqual(data,original)
-
-    def test_subregion_difference_is_not_cross_region_and_hidden_item_stays_hidden(self):
-        data,s=fixture();s=mode(data,s,'跨區列印子項')
-        s['layout']['placements']['AA']['subregion']='F'
-        s['layout']['placements']['BB']['print_enabled']=False
-        s['layout']['placements']['EE']['print_enabled']=False
-        row=handwritten.prepare(core.make_rows(data,s),s)[0]
-        keys=[t['key'] for items in row['zones'].values() for t in items]
-        self.assertNotIn('AA',keys);self.assertNotIn('BB',keys);self.assertIn('EE',keys)
-        self.assertEqual(next(e for e in row['display_accounting'] if e['code']=='BB')['covered_by'],'使用者設定不列印')
-
-    def test_shared_child_and_duplicate_orders_emit_once_and_accounting_is_consistent(self):
-        data,s=fixture();s=mode(data,s,'跨區列印子項')
-        data['sets'].append(dict(data['sets'][0],LCS_ID='SECOND'))
-        data['details'].append(dict(data['details'][-1],LCHK_ITEM='SECOND'))
-        s['layout']=cs.set_override(s['layout'],'G:SECOND','SECOND','外送')
-        data['details']+=copy.deepcopy(data['details'])
-        row=handwritten.prepare(core.make_rows(data,s),s)[0]
-        self.assertEqual(sum(t['key']=='BB' for items in row['zones'].values() for t in items),1)
-        self.assertTrue(all('BB' not in p['covered_codes'] for p in row['panel_display']))
-        self.assertTrue(all(e['display']=='BB' and e['zone']=='sendout' for e in row['display_accounting'] if e['code']=='BB'))
-
-    def test_batch_save_json_roundtrip_and_legacy_boolean_preservation(self):
-        data,s=fixture();old=copy.deepcopy(s['layout'])
-        record=next(r for r in cs.records(data,s,old) if r['kind']=='套組')
-        before=cs.CatalogPage.values(record);draft=catalog_batch.Drafts()
-        draft.put('items',record,before,dict(before,print_enabled='跨區列印子項'))
-        candidate,layout=draft.prepare(s,old)
-        self.assertEqual(old,s['layout']);self.assertIn('是 → 跨區列印子項',draft.details())
-        document=cc.build(data,candidate,layout)
-        restored,updated=cc.import_settings(document,candidate,data)
-        self.assertEqual(updated['placements']['G:PACK']['print_mode'],'cross_zone')
-        self.assertEqual(next(r['print_state'] for r in cc.build(data,restored,updated)['records'] if r['kind']=='套組'),'跨區列印子項')
-        record=next(r for r in cs.records(data,restored,updated) if r['kind']=='套組')
-        for state in ('是','否'):
-            _,saved=cs.edit_item(restored,updated,record,record['label'],record['zone'],print_enabled=state)
-            self.assertNotIn('print_mode',saved['placements']['G:PACK'])
-            self.assertEqual(saved['placements']['G:PACK']['print_enabled'],state=='是')
-        _,normalized,_=config_store.normalize(s,old,None)
-        self.assertEqual(normalized['placements'],old['placements'])
-
-    def test_invalid_modes_fail_without_changing_settings(self):
-        data,s=fixture();original=copy.deepcopy(s)
-        for key,value in [('AA',dict(print_mode='cross_zone')),('G:PACK',dict(print_mode='bad')),('G:PACK',dict(print_mode='cross_zone',print_enabled=False))]:
-            layout=copy.deepcopy(s['layout']);layout['placements'][key].update(value)
-            with self.assertRaises(ValueError):ls.validate(layout)
-        self.assertEqual(s,original)
 
 
 class ThreeRowTests(unittest.TestCase):

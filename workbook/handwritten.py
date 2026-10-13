@@ -452,7 +452,7 @@ def export(path,rows,date,settings,draft=False):
         for group in machines:
             number=str(current[group+'_seq'])+('/' if group=='mab' else '')
             color=serial_ink(group,settings,item.get('_serial_base_size',fonts['e411' if group=='e411' else 'other']))
-            if item.get('panel'):
+            if item.get('panel') and not item.get('serial_on_label'):
                 runs.append(({'e411':'e411','hba1c':'HbA1c','mab':'mab'}[group]+number,color))
             elif group=='e411':runs.insert(0,(number,color))
             else:runs.append((number,color))

@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 from workbook.update_install import safe_name
 
 SAFE_SCRIPTS={'build_desktop.py','desktop_entry.py','update_entry.py','fetch_runtime_installers.py','audit_public.py','test_update_ui.py','verify_update_release.py'}
-SAFE_TESTS={'test_updates.py','test_config_store.py','test_preferences.py','test_catalog_cache.py','test_print_preferences_v45.py','test_three_rows_panels.py','test_case_lookup.py','test_settings_history.py','test_usage_stats.py'}
+SAFE_TESTS={'test_updates.py','test_config_store.py','test_preferences.py','test_catalog_cache.py','test_print_preferences_v45.py','test_three_rows_panels.py','test_case_lookup.py','test_settings_history.py','test_usage_stats.py','test_panel_children.py'}
 
 
 def permitted(name):

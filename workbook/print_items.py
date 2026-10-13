@@ -2,6 +2,7 @@
 import copy,re
 from . import layout_settings as ls,subregions as sr
 from .print_style import item_color
+from . import panel_children as pc
 
 
 def prepare(rows,settings,layout):
@@ -32,10 +33,9 @@ def prepare(rows,settings,layout):
             seen_panels.add(key)
             if not rule:raise ValueError('套組 '+panel['code']+' 已勾選列印，但尚未設定列印簡稱及區域。')
             printed_panels.append((panel,rule))
-        covered={code for panel,_ in printed_panels for code in panel['present_members']}
-        cross_panels=[(panel,sr.ZONE_KEYS[rule['zone']]) for panel,rule in printed_panels
-            if sr.placement(layout,'G:'+panel['code'],{}).get('print_mode')=='cross_zone']
-        cross_codes=set()
+        parents={p['code']:p for p in row.get('ordered_panels',[])}
+        printed={p['code']:rule for p,rule in printed_panels}
+        transferred={};hidden={};shown_members={};visible_sources={}
         for source in row.get('source_items',[]):
             code=source['code'];group=settings.get('rules',{}).get(code,{}).get('group','routine')
             label=source['label'];rule=match_rule({'LCI_ID':code,'LCI_NAME':source.get('name',''),
@@ -48,37 +48,61 @@ def prepare(rows,settings,layout):
             enabled=sr.placement(layout,code,{'print_enabled':group!='aux'})['print_enabled']
             entry=dict(code=code,original=label,zone=zone,display=shown,covered_by=None)
             accounting.append(entry)
-            numbered_member=code in covered and group in counts
-            cross_member=any(code in panel['present_members'] and zone!=destination for panel,destination in cross_panels)
-            if cross_member:cross_codes.add(code)
-            if code in covered and not numbered_member and not cross_member:
-                entry.update(display='',covered_by='登錄套組取代子項');continue
-            if not enabled and not numbered_member:
+            parent=source.get('parent_panel','')
+            if not source.get('parent_known'):
+                if parents and layout.get('panel_children_version'):
+                    raise ValueError('舊工作進度未包含套組來源，請重新從資料庫匯入當日資料後輸出。')
+                # Compatibility for legacy snapshots before the panel settings migration.
+                candidates=[p for p in parents.values() if code in p['present_members']]
+                if len(candidates)==1:parent=candidates[0]['code']
+            entry['parent_panel']=parent
+            if parent in parents:
+                enabled=pc.enabled(layout,'G:'+parent,dict(code=code,label=shown,zone=reverse[zone],machine_group=group,print_enabled=enabled))
+                item['panel_member']=True
+                if not enabled:
+                    hidden.setdefault(parent,set()).add(code)
+                    rule=printed.get(parent)
+                    if rule and group in counts and pc.same_label(rule['label'],shown):
+                        transferred.setdefault(parent,set()).add(group)
+                        entry.update(display=rule['label'],zone=sr.ZONE_KEYS[rule['zone']],covered_by='流水號移至同代碼套組')
+                    else:entry.update(display='',covered_by='本套組子項設定不列印')
+                    continue
+                shown_members.setdefault(parent,set()).add(code)
+                entry['print_reason']='本套組子項設定列印'
+            if not enabled:
                 entry.update(display='',covered_by='使用者設定不列印');continue
-            if numbered_member:entry['print_reason']='已列印套組的流水號子項，獨立列印'
-            if cross_member:
-                item['cross_zone_member']=True
-                entry['print_reason']='套組設定跨區列印子項，保留子項原區域'
             # A malformed source item type is still visible, just as in previous releases.
             if source.get('type','I')!='I':item['label']=f"[{source.get('type')}:{code}] "+shown
             source_key=(code,source.get('type','I'))
+            visible_sources.setdefault(source_key,[]).append(source)
             if source_key not in seen_items:tokens.append(item);seen_items.add(source_key)
+            elif item.get('panel_member'):
+                next(t for t in tokens if t['key']==code)['panel_member']=True
+        for item in tokens:
+            sources=[s for (code,_),items in visible_sources.items() if code==item['key'] for s in items]
+            item['color']=item_color(layout,item['key'],item['label'],dict(row,source_items=sources,original_source_items=[]),settings,reverse[item['zone']],item['codes'])
         for panel,rule in printed_panels:
-            members=set(panel['present_members'])
-            numbered={code for code in members if settings.get('rules',{}).get(code,{}).get('group','routine') in counts}
-            codes=members-numbered-cross_codes
-            item=token('G:'+panel['code'],rule['label'],sr.ZONE_KEYS[rule['zone']],sorted(codes),[],panel['name'],True)
-            item['panel']=True;tokens.append(item)
+            code=panel['code'];codes=hidden.get(code,set())
+            machines=[g for g in counts if g in transferred.get(code,set())]
+            item=token('G:'+code,rule['label'],sr.ZONE_KEYS[rule['zone']],sorted(codes),machines,panel['name'],True)
+            item.update(panel=True,serial_on_label=True);tokens.append(item)
             row['panel_display'].append(dict(code=panel['code'],label=rule['label'],zone=item['zone'],
-                covered_codes=sorted(codes),numbered_member_codes=sorted(numbered),
-                cross_zone_member_codes=sorted(members & cross_codes),missing_members=panel['missing_members']))
-            for entry in accounting:
-                if entry['code'] in codes:entry.update(display=rule['label'],zone=item['zone'],covered_by='登錄套組 '+panel['code']+' 取代子項；不增補缺項')
+                covered_codes=sorted(codes),visible_member_codes=sorted(shown_members.get(code,set())),
+                transferred_serial_groups=machines,missing_members=panel['missing_members']))
+        # A transferred sequence belongs to the matching panel label even when
+        # another visible member shares that machine group and is drawn first.
+        serial_targets={}
+        for item in tokens:
+            if item.get('serial_on_label'):
+                for group in item['machines']:serial_targets.setdefault(group,item['key'])
+        for item in tokens:
+            item['machines']=[g for g in item['machines'] if g not in serial_targets or serial_targets[g]==item['key']]
+            item['machine']=next(iter(item['machines']),None)
         adult=set(row.get('adult_compact_codes',[]))
         if 'adult_compact_codes' not in row:
             adult={c for p in row.get('verified_panels',[]) if (p.get('name') or '').strip().startswith(('成健','不報成健')) for c in p['members']}
         if row.get('adult_health_flag') and settings.get('compact_adult_health',True):
-            fold=[t for t in tokens if not t['configured'] and not t['machines'] and not t.get('cross_zone_member') and set(t['codes'])<=adult]
+            fold=[t for t in tokens if not t['configured'] and not t['machines'] and not t.get('panel_member') and set(t['codes'])<=adult]
             for t in fold:
                 tokens.remove(t)
                 for a in accounting:
@@ -88,7 +112,7 @@ def prepare(rows,settings,layout):
         if {'mab','U-cre','U-ACR'}<=labels:fold_labels|={'U-cre','U-ACR'}
         if {'UTP','U-cre','U-PCR'}<=labels:fold_labels|={'U-cre','U-PCR'}
         for t in list(tokens):
-            if t['zone']=='other' and t['original_label'] in fold_labels and not t.get('panel') and not t['machines'] and not t.get('cross_zone_member'):
+            if t['zone']=='other' and t['original_label'] in fold_labels and not t.get('panel') and not t['machines'] and not t.get('panel_member'):
                 tokens.remove(t)
                 for a in accounting:
                     if a['code'] in t['codes']:a['covered_by']='mab／UTP完整尿液組合'

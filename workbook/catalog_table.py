@@ -36,11 +36,11 @@ def select_rows(rows,query='',filters=None,column=None,descending=False):
 
 
 class CatalogTable:
-    def __init__(self,parent,columns,on_select,help_text=None):
+    def __init__(self,parent,columns,on_select,help_text=None,*,hierarchy=False):
         import tkinter as tk
         from tkinter import ttk
         from .ui_styles import readable_table
-        self.columns=columns;self.rows=[];self.column=None;self.descending=False
+        self.columns=columns;self.rows=[];self.column=None;self.descending=False;self.hierarchy=hierarchy
         self.on_select=on_select;self.filters={};self.filter_widgets={};self.cells=[];self.headers={};self.suspend=False
         self.query=tk.StringVar();self.count=tk.StringVar()
         search=ttk.Frame(parent);search.pack(fill='x',pady=(0,6))
@@ -57,6 +57,9 @@ class CatalogTable:
         self.filter_frame=ttk.Frame(self.canvas,height=60)
         self.filter_window=self.canvas.create_window(2,0,window=self.filter_frame,anchor='nw')
         self.tree=ttk.Treeview(holder,columns=[k for k,_,_ in columns],show='',selectmode='browse',style=readable_table(parent,pending=True))
+        if hierarchy:
+            self.tree.configure(show='tree',displaycolumns=[k for k,_,_ in columns[1:]])
+            self.tree.column('#0',width=columns[0][2],minwidth=columns[0][2],stretch=False)
         self.tree.tag_configure('dirty',background='#FFF0AD',foreground='#533F00')
         self.tree.tag_configure('selected_clean',background='#E7F5F6',foreground='#006B7D')
         for key,title,width in columns:
@@ -87,7 +90,7 @@ class CatalogTable:
         self.canvas.configure(height=height)
         left=0
         for (key,_,_),cell in zip(self.columns,self.cells):
-            width=self.tree.column(key,'width');cell.place(x=left,y=0,width=width,height=height);left+=width
+            width=self.tree.column('#0' if self.hierarchy and key==self.columns[0][0] else key,'width');cell.place(x=left,y=0,width=width,height=height);left+=width
         self.filter_frame.configure(width=left,height=height)
         self.canvas.configure(scrollregion=(0,0,left+4,height));self.canvas.xview_moveto(self.tree.xview()[0])
 
@@ -124,9 +127,29 @@ class CatalogTable:
 
     def refilter(self,*_):
         if self.suspend:return
-        before=self.tree.selection();self.tree.delete(*self.tree.get_children())
+        before=self.tree.selection();opened={iid for iid in self.tree.get_children() if self.tree.item(iid,'open')}
+        self.tree.delete(*self.tree.get_children())
         selected=select_rows(self.rows,self.query.get(),{k:v.get() for k,v in self.filters.items()},self.column,self.descending)
-        for index,row in selected:self.tree.insert('','end',iid=str(index),values=[row.get(k,'') for k,_,_ in self.columns])
+        if self.hierarchy:
+            matched={i for i,_ in selected};wanted=set(matched)
+            for index in matched:
+                parent=self.rows[index].get('_parent')
+                if parent is not None:wanted.add(parent)
+            wanted.update(i for i,r in enumerate(self.rows) if r.get('_parent') in matched)
+            ordered=select_rows(self.rows,column=self.column,descending=self.descending)
+            children={}
+            for i,r in ordered:
+                if i in wanted and '_parent' in r:children.setdefault(r['_parent'],[]).append((i,r))
+            selected=[]
+            for index,row in ordered:
+                if index not in wanted or '_parent' in row:continue
+                selected.append((index,row))
+                selected.extend(children.get(index,[]))
+        filtered=bool(self.query.get().strip()) or any(v.get()!=ALL for v in self.filters.values())
+        for index,row in selected:
+            parent=str(row['_parent']) if self.hierarchy and '_parent' in row else ''
+            self.tree.insert(parent,'end',iid=str(index),text=row.get(self.columns[0][0],''),
+                open=str(index) in opened or (self.hierarchy and filtered),values=[row.get(k,'') for k,_,_ in self.columns])
         if before and self.tree.exists(before[0]):self.tree.selection_set(before[0])
         self.paint_rows()
         self.on_select(self.selected())
@@ -135,7 +158,9 @@ class CatalogTable:
 
     def paint_rows(self):
         selected=set(self.tree.selection())
-        for iid in self.tree.get_children():
+        for index in range(len(self.rows)):
+            iid=str(index)
+            if not self.tree.exists(iid):continue
             row=self.rows[int(iid)]
             self.tree.item(iid,tags=('dirty',) if row.get('_dirty') else ('selected_clean',) if iid in selected else ())
 
