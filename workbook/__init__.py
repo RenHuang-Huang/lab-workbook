@@ -1,0 +1,1 @@
+"""Local laboratory worksheet generator."""
