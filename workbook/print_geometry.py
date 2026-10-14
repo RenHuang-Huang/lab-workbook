@@ -35,6 +35,23 @@ def lane_center(position,count,height):
     return (position-.5)*height/count
 
 
+def region_grid(groups,key,columns,width,layout):
+    """Other uses equal local columns; explicitly reserved empty slots still count."""
+    used=max(g['column'] for g in groups)+1
+    count=used if key=='other' else max(columns,used)
+    zone=next(z for z,k in sr.ZONE_KEYS.items() if k==key)
+    spans={g['column']:1 for g in groups} if key=='other' else group_spans(groups,count,zone,layout)
+    return count,width/count,spans
+
+
+def result_reserve(key,width,padding,columns):
+    # Preserve a visible writing line before shrinking the label. Narrow Other
+    # columns need not reserve the same long blank as a full-width result cell.
+    reserve=min(3,width*.28)
+    if key=='other' and columns>1:reserve=min(reserve,1.5+padding*.4)
+    return reserve
+
+
 def group_spans(groups,columns,zone,layout):
     """Borrow empty space to the right without moving any subgroup's anchor.
 

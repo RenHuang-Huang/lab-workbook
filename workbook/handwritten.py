@@ -463,14 +463,15 @@ def export(path,rows,date,settings,draft=False):
         zone=next(name for name,k in ZONE_KEYS.items() if k==key)
         groups=sr.arrange(items,zone,config)
         columns=max(g['column'] for g in groups)+1
-        # Keep document-wide anchors, but let text use unoccupied space on its right.
+        # Other shares this row's width equally; remaining zones retain common anchors.
         normal_columns=fixed_columns[key]
         if columns>normal_columns and not tiny:raise LayoutCapacityError('子區域數超過固定欄位，請調整區域或使用強制輸出')
-        count=max(normal_columns,columns);cw=w/count;scale=normal_columns/count
-        spans=print_geometry.group_spans(groups,count,zone,config)
+        count,cw,spans=print_geometry.region_grid(groups,key,normal_columns,w,config)
+        scale=min(1,normal_columns/count)
         readable_min=min(7.5,fonts[key])
         peak=max(max(p for p,_ in g['entries']) for g in groups)
         if peak>3:raise LayoutCapacityError('檢驗區每欄最多三小列')
+        group_plans=[];seen=set(printed)
         for group in groups:
             if only_adult and not any(ditto.is_adult(item) for _,item in group['entries']):continue
             gx=x+cw*group['column']
@@ -480,12 +481,13 @@ def export(path,rows,date,settings,draft=False):
             cellh=rowh if single else rowh/(3 if lanes==2 else lanes)
             size=max(24,fonts[key]) if single else fonts[key]
             if key=='bio' and all(item.get('key')=='@' for _,item in entries):size=fonts['adult_health']
-            padding=1.2*scale
-            planned=[];seen=set(printed)
+            padding=min(.8,cw*.12) if key=='other' and count>1 else 1.2*scale
+            planned=[]
             for position,item in entries:
                 runs,machines=item_segments(item,seen);seen.update(machines)
                 has_result=bool(item.get('machines')) or key in ('e411','other')
-                reserve=min(3*scale,available_width*.28) if has_result else 0
+                reserve=(print_geometry.result_reserve(key,available_width,padding,count) if key=='other'
+                         else min(3*scale,available_width*.28)) if has_result else 0
                 room=available_width-padding-reserve
                 measured=sum(measure_run(item_width,text,size,ink) for text,ink in runs)
                 size=min(size,size*room/max(.001,measured))
@@ -506,6 +508,17 @@ def export(path,rows,date,settings,draft=False):
                 size*=ratio
             if not tiny and size<readable_min-.001:raise LayoutCapacityError('子區域 '+group['letter']+' 空間不足，請調整簡稱、子區域或使用強制輸出')
             size=max(.05,size)
+            group_plans.append(dict(size=size,gx=gx,width=available_width,single=single,
+                                    cellh=cellh,padding=padding,planned=planned))
+        # In the Other region, every column of this order uses the size that fits
+        # its tightest column. A sparse trailing column must not enlarge ucr alone.
+        if key=='other' and len(group_plans)>1:
+            shared_size=min(g['size'] for g in group_plans)
+            for g in group_plans:g['size']=shared_size
+        for plan in group_plans:
+            size=plan['size'];gx=plan['gx'];available_width=plan['width']
+            single=plan['single'];cellh=plan['cellh'];padding=plan['padding']
+            planned=plan['planned'];lanes=peak
             for position,runs,machines,has_result,reserve,item in planned:
                 if only_adult and not ditto.is_adult(item):continue
                 center=y+rowh/2 if single else y+print_geometry.lane_center(position,lanes,rowh)

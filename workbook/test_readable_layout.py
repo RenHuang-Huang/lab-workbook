@@ -1,6 +1,9 @@
 """Synthetic PDF regressions for slot borrowing and real glyph height fitting."""
 import copy
+import tempfile
 import unittest
+from pathlib import Path
+import pdfplumber
 from workbook import core,handwritten,catalog_settings as cs,print_geometry as pg
 from workbook import subregions as sr,layout_settings as ls
 from workbook.pdf_fonts import PdfFonts,glyph_metrics
@@ -26,6 +29,102 @@ def zone_chars(pages,col,top,bottom):
 
 
 class ReadableLayoutTests(unittest.TestCase):
+    def test_other_uses_equal_local_columns_even_when_another_row_has_three(self):
+        for fixed in (True,False):
+            data,s=placed([['HbA1c','mab','uTP','ucr'],[f'X{i}' for i in range(7)]],'其他')
+            s['fixed_20_rows']=fixed
+            result,pages=render(data,s);entry=result['row_layout'][0]
+            chars=zone_chars(pages,10,entry['top_mm'],entry['top_mm']+entry['height_mm'])
+            self.assertEqual(result['subregion_columns']['other'],3)
+            self.assertAlmostEqual(chars[-3]['x0']-chars[0]['x0'],12.5*MM,places=3)
+            self.assertEqual(len({round(c['size'],4) for c in chars}),1)
+
+    def test_other_equal_width_respects_explicitly_reserved_middle_column(self):
+        layout=sr.migrate(ls.defaults(),[])
+        items=[dict(label='A',placement=dict(subregion='A')),dict(label='C',placement=dict(subregion='C'))]
+        layout['subregions']['其他']['B']['compact_subregions']=False
+        groups=sr.arrange(items,'其他',layout)
+        count,width,spans=pg.region_grid(groups,'other',6,25,layout)
+        self.assertEqual(count,3);self.assertAlmostEqual(width,25/3)
+        self.assertEqual(spans,{0:1,2:1})
+
+    def test_other_adaptive_force_overflow_keeps_result_lines_for_non_machine_items(self):
+        from workbook.adaptive_layout import zone_plan
+        from workbook.print_style import Ink
+        items=[dict(label=f'X{i}',placement=dict(subregion='A')) for i in range(28)]
+        layout=sr.migrate(ls.defaults(),[])
+        plan=zone_plan(items,'other',layout,1,25,16,
+                       lambda item,seen: ([(item['label'],Ink('#202830'))],[]),
+                       lambda text,size: len(text)*size*.15,force=True)
+        size,lanes=plan['packed'];pieces=[p for lane in lanes for p in lane]
+        self.assertEqual(len(pieces),28)
+        self.assertTrue(all(p['result']>0 for p in pieces))
+        self.assertEqual(len({p['width'] for p in pieces}),1)
+
+    def test_other_keeps_text_serials_and_positive_result_lines_inside_equal_cells(self):
+        for fixed in (True,False):
+            data,s=placed([['HbA1c','mab','uTP','ucr']],'其他')
+            s['fixed_20_rows']=fixed
+            for code,group in [('HbA1c','hba1c'),('mab','mab')]:s['rules'][code]=dict(group=group,label=code)
+            with tempfile.TemporaryDirectory() as directory:
+                path=Path(directory)/'synthetic.pdf'
+                result=core.export_pdf(path,core.make_rows(data,s),data['date'],s)
+                with pdfplumber.open(path) as pdf:
+                    page=pdf.pages[0];entry=result['row_layout'][0]
+                    chars=zone_chars([page.chars],10,entry['top_mm'],entry['top_mm']+entry['height_mm'])
+                    labels=[c for c in chars if c['text'].isalpha()]
+                    self.assertGreater(labels[0]['size'],10)
+                    self.assertEqual(len({round(c['size'],4) for c in labels}),1)
+                    lines=[l for l in page.lines if l['linewidth']==.25 and l['x0']>=175*MM]
+                    self.assertEqual(len(lines),4)
+                    for line in lines:
+                        right=(187.5 if line['x0']<187.5*MM else 200)*MM
+                        self.assertGreaterEqual(line['width']/MM,1.49)
+                        self.assertLessEqual(line['x1'],right-.39*MM)
+                    for char in chars:
+                        right=(187.5 if char['x0']<187.5*MM else 200)*MM
+                        self.assertLess(char['x1'],right-1.4*MM)
+
+    def test_other_overflow_columns_share_size_only_within_current_order(self):
+        for fixed in (True,False):
+            for single_max in (False,True):
+                data,s=placed([['HbA1c','mab','uTP','ucr'],['HbA1c','mab','uTP']],'其他')
+                s['fixed_20_rows']=fixed
+                for code,group in [('HbA1c','hba1c'),('mab','mab')]:s['rules'][code]=dict(group=group,label=code)
+                if single_max:s['layout']['subregions']['其他']['B']['display']='single_max'
+                source=copy.deepcopy(s);result,pages=render(data,s)
+                layouts=result['row_layout']
+                first=layouts[0];second=layouts[1]
+                a=zone_chars(pages,10,first['top_mm'],first['top_mm']+first['height_mm'])
+                b=zone_chars(pages,10,second['top_mm'],second['top_mm']+second['height_mm'])
+                labels=[c for c in a if c['text'].isalpha()]
+                self.assertEqual(''.join(c['text'] for c in a),'HbA1c1mab1/uTPucr')
+                self.assertEqual(len({round(c['size'],4) for c in labels}),1)
+                self.assertGreater(min(c['size'] for c in b if c['text'].isalpha()),labels[0]['size'])
+                if not single_max:
+                    self.assertAlmostEqual(a[-3]['x0']-a[0]['x0'],12.5*MM,places=3)
+                    self.assertAlmostEqual(a[-3]['matrix'][5],a[0]['matrix'][5],places=3)
+                self.assertEqual(result['sequences']['hba1c'],2);self.assertEqual(result['sequences']['mab'],2)
+                self.assertEqual(s,source)
+
+    def test_other_forced_columns_share_size_and_preserve_every_label(self):
+        for fixed in (True,False):
+            long='LongLabel'*15
+            data,s=placed([[long,'mab','uTP','ucr']],'其他')
+            s.update(fixed_20_rows=fixed,force_export=True)
+            result,pages=render(data,s);entry=result['row_layout'][0]
+            chars=zone_chars(pages,10,entry['top_mm'],entry['top_mm']+entry['height_mm'])
+            self.assertEqual(''.join(c['text'] for c in chars),long+'mabuTPucr')
+            self.assertEqual(len({round(c['size'],4) for c in chars}),1)
+            self.assertTrue(result['forced_adjustments'])
+
+    def test_other_uniformity_does_not_reduce_e411_sparse_trailing_column(self):
+        data,s=placed([['Ferritin','sAg','T4','AFP']],'e411')
+        s['force_export']=True
+        result,pages=render(data,s);entry=result['row_layout'][0]
+        chars=zone_chars(pages,9,entry['top_mm'],entry['top_mm']+entry['height_mm'])
+        self.assertGreater(chars[-1]['size'],next(c['size'] for c in chars if c['text']=='F'))
+
     def test_sparse_ferritin_uses_empty_right_slots_in_both_height_modes(self):
         for fixed in (True,False):
             data,s=placed([['Ferritin'],[f'X{i}' for i in range(9)]])
