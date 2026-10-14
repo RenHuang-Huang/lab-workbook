@@ -463,50 +463,57 @@ def export(path,rows,date,settings,draft=False):
         zone=next(name for name,k in ZONE_KEYS.items() if k==key)
         groups=sr.arrange(items,zone,config)
         columns=max(g['column'] for g in groups)+1
-        # Missing groups leave trailing space; they never stretch the remaining slots.
+        # Keep document-wide anchors, but let text use unoccupied space on its right.
         normal_columns=fixed_columns[key]
         if columns>normal_columns and not tiny:raise LayoutCapacityError('子區域數超過固定欄位，請調整區域或使用強制輸出')
         count=max(normal_columns,columns);cw=w/count;scale=normal_columns/count
+        spans=print_geometry.group_spans(groups,count,zone,config)
         readable_min=min(7.5,fonts[key])
         peak=max(max(p for p,_ in g['entries']) for g in groups)
         if peak>3:raise LayoutCapacityError('檢驗區每欄最多三小列')
         for group in groups:
             if only_adult and not any(ditto.is_adult(item) for _,item in group['entries']):continue
             gx=x+cw*group['column']
+            available_width=cw*spans[group['column']]
             entries=group['entries'];opts=group['options'];single=len(entries)==1 and opts['display']=='single_max'
             lanes=peak
             cellh=rowh if single else rowh/(3 if lanes==2 else lanes)
-            size=height_fit(max(24,fonts[key]),cellh) if single else zone_size(key,lanes)
-            if key=='bio' and all(item.get('key')=='@' for _,item in entries):size=height_fit(fonts['adult_health'],cellh)
+            size=max(24,fonts[key]) if single else fonts[key]
+            if key=='bio' and all(item.get('key')=='@' for _,item in entries):size=fonts['adult_health']
             padding=1.2*scale
             planned=[];seen=set(printed)
             for position,item in entries:
                 runs,machines=item_segments(item,seen);seen.update(machines)
                 has_result=bool(item.get('machines')) or key in ('e411','other')
-                reserve=min(3*scale,cw*.28) if has_result else 0
-                room=cw-padding-reserve
+                reserve=min(3*scale,available_width*.28) if has_result else 0
+                room=available_width-padding-reserve
                 measured=sum(measure_run(item_width,text,size,ink) for text,ink in runs)
                 size=min(size,size*room/max(.001,measured))
                 planned.append((position,runs,machines,has_result,reserve,item))
-            # Measure the actual faces rather than reserve the full CJK box for
-            # ASCII serials. Keep adjacent lines and row boundaries separate.
-            extent=0
-            for _,runs,_,_,_,_ in planned:
-                for value,ink in runs:
-                    ascent,descent=typefaces.metrics(run_size(size,ink),value)
-                    rise=run_rise(size,ink)
-                    extent=max(extent,2*(ascent+rise-size*.32),2*(size*.32-descent-rise))
-            size*=min(1,max(.1,cellh-.2)*mm/max(.001,extent))
+            # Font ascent/descent includes unused space for every possible glyph.
+            # Fit the actual ink (including descenders and raised serials) around
+            # the unchanged baseline, sharing one size throughout this subgroup.
+            # Iterate because serial size is capped independently of label size.
+            for _ in range(16):
+                extent=0
+                for _,runs,_,_,_,_ in planned:
+                    for value,ink in runs:
+                        ascent,descent=typefaces.ink_metrics(run_size(size,ink),value)
+                        rise=run_rise(size,ink)
+                        extent=max(extent,2*(ascent+rise-size*.32),2*(size*.32-descent-rise))
+                ratio=min(1,max(.1,cellh-.2)*mm/max(.001,extent))
+                if ratio>=1-.000001:break
+                size*=ratio
             if not tiny and size<readable_min-.001:raise LayoutCapacityError('子區域 '+group['letter']+' 空間不足，請調整簡稱、子區域或使用強制輸出')
             size=max(.05,size)
             for position,runs,machines,has_result,reserve,item in planned:
                 if only_adult and not ditto.is_adult(item):continue
                 center=y+rowh/2 if single else y+print_geometry.lane_center(position,lanes,rowh)
                 measured=sum(measure_run(item_width,text,size,ink) for text,ink in runs)
-                cursor=gx+(padding/2 if not single else (cw-measured-reserve)/2)
+                cursor=gx+(padding/2 if not single else (available_width-measured-reserve)/2)
                 for value,color in runs:
                     length=measure_run(item_width,value,size,color);item_text(value,cursor,center,length+.001,size,color);cursor+=length
-                if has_result:line(cursor+padding*.4,center+min(1.2,cellh*.2),gx+cw-padding/2,center+min(1.2,cellh*.2),'#C1C8CD',.25)
+                if has_result:line(cursor+padding*.4,center+min(1.2,cellh*.2),gx+available_width-padding/2,center+min(1.2,cellh*.2),'#C1C8CD',.25)
                 printed.update(machines)
     def draw_patient(row,y,tiny=False):
         name,sex,chart=ditto.patient_display(row,current_ditto['patient'])
@@ -542,6 +549,7 @@ def export(path,rows,date,settings,draft=False):
         block_top=y+(rowh-block_height)/2
         for group in plan['groups']:
             size=group['size']*scale;gx=xs[col]+group['column']*cw
+            available_width=group['width']
             for piece in group['pieces']:
                 lines=piece['lines']
                 for offset,runs in enumerate(lines):
@@ -550,10 +558,10 @@ def export(path,rows,date,settings,draft=False):
                     center=block_top+print_geometry.lane_center(position,lanes,block_height)
                     measured=sum(measure_run(item_width,value,size,ink) for value,ink in runs)
                     reserve=piece['reserve'] if offset==len(lines)-1 else 0
-                    cursor=gx+((cw-measured-reserve)/2 if group['single'] else padding/2)
+                    cursor=gx+((available_width-measured-reserve)/2 if group['single'] else padding/2)
                     for value,color in runs:
                         length=measure_run(item_width,value,size,color);item_text(value,cursor,center,length+.001,size,color);cursor+=length
-                    if reserve:line(cursor+padding*.4,center+min(1.2,block_height/max(1,lanes)*.2),gx+cw-padding/2,center+min(1.2,block_height/max(1,lanes)*.2),'#C1C8CD',.25)
+                    if reserve:line(cursor+padding*.4,center+min(1.2,block_height/max(1,lanes)*.2),gx+available_width-padding/2,center+min(1.2,block_height/max(1,lanes)*.2),'#C1C8CD',.25)
                 printed.update(piece['machines'])
     def draw_ditto(x,y,w,color=black):
         size=height_fit(ditto_size,rowh);bold=bool(settings.get('ditto_bold',True))

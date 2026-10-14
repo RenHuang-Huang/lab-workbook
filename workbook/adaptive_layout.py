@@ -38,15 +38,18 @@ def zone_plan(items,key,layout,columns,width,font_size,segments,measure,seen=Non
         packed=pack_segments(tokens,width,12,measure,max_lanes=3,start_size=font_size)
         return dict(packed=packed,offset=0,width=width,adult=None,height=12,groups=[dict(size=packed[0])],forced=True)
     count=max(columns,max(g['column'] for g in groups)+1);cw=width/count
+    from .print_geometry import group_spans
+    spans=group_spans(groups,count,zone,layout)
     result=[];seen=set() if seen is None else seen;line_counts={};maximum_size=0;single_height=0
     padding=min(1.2,cw*.2)
     for group in groups:
+        available_width=cw*spans[group['column']]
         entries=group['entries'];single=len(entries)==1 and group['options']['display']=='single_max'
         prepared=[];size=entries[0][1].get('font_size',font_size) if len(entries)==1 and entries[0][1].get('key')=='@' else font_size
         for position,item in entries:
             runs,machines=segments(item,seen);seen.update(machines)
-            reserve=min(3,cw*.28) if item.get('machines') or item.get('machine') or key in ('e411','other') else 0
-            room=cw-padding-reserve
+            reserve=min(3,available_width*.28) if item.get('machines') or item.get('machine') or key in ('e411','other') else 0
+            room=available_width-padding-reserve
             # Each item occupies one lane; wrapping must never create a fourth.
             widest=sum(measure_run(measure,value,size,ink) for value,ink in runs)
             if widest>room:size=min(size,size*room/widest)
@@ -64,7 +67,7 @@ def zone_plan(items,key,layout,columns,width,font_size,segments,measure,seen=Non
             if not single:line_counts[position]=max(line_counts.get(position,1),len(lines))
             else:single_height=max(single_height,required_height(len(lines),run_height(runs,size)))
         if not single:maximum_size=max(maximum_size,*(run_height(runs,size) for _,runs,_,_,_ in prepared))
-        result.append(dict(column=group['column'],pieces=pieces,size=size,single=single))
+        result.append(dict(column=group['column'],width=available_width,pieces=pieces,size=size,single=single))
     peak=max(line_counts,default=0);starts={};lanes=0
     for position in range(1,peak+1):starts[position]=lanes;lanes+=line_counts.get(position,1)
     return dict(groups=result,columns=count,cell_width=cw,padding=padding,starts=starts,lanes=lanes,

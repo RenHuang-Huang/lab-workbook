@@ -33,3 +33,20 @@ def column_counts(rows,layout):
 def lane_center(position,count,height):
     if count==2:return height/2+(position-1.5)*height/3
     return (position-.5)*height/count
+
+
+def group_spans(groups,columns,zone,layout):
+    """Borrow empty space to the right without moving any subgroup's anchor.
+
+    A dense row can set a larger document-wide column count. Its unused slots
+    need not shrink a sparse row's text. Populated groups and explicitly reserved
+    empty subregions remain hard boundaries, including empty trailing regions.
+    """
+    by_letter={g['letter']:g for g in groups}
+    barriers={g['column'] for g in groups};column=0
+    for letter in sr.LETTERS:
+        if letter in by_letter:column=by_letter[letter]['column']+1
+        elif not sr.options(layout,zone,letter)['compact_subregions']:
+            barriers.add(column);column+=1
+    return {g['column']:max(1,min((c for c in barriers if c>g['column']),default=columns)-g['column'])
+            for g in groups}
