@@ -47,6 +47,8 @@ class App:
         self.ditto_bio=tk.BooleanVar(value=self.settings.get('ditto_bio',True))
         self.ditto_patient=tk.BooleanVar(value=self.settings.get('ditto_patient',True))
         self.show_region_lines=tk.BooleanVar(value=self.settings.get('show_region_lines',False))
+        self.show_order_notes=tk.BooleanVar(value=self.settings.get('show_order_notes',True))
+        self.apply_order_note_rules=tk.BooleanVar(value=self.settings.get('apply_order_note_rules',True))
         self.export_glucose_ac=tk.BooleanVar(value=self.settings.get('export_glucose_ac',True))
         self.glucose_ac_columns=tk.StringVar(value='5')
         from . import print_style as ps
@@ -139,6 +141,8 @@ class App:
         self.merge_exclusions_enabled.set(s['merge_exclusions_enabled'])
         self.merge_excluded_worknos.set(', '.join(map(str,s['merge_excluded_worknos'])))
         self.ditto_font_size.set(str(s['ditto_font_size']))
+        self.show_order_notes.set(s.get('show_order_notes',True))
+        self.apply_order_note_rules.set(s.get('apply_order_note_rules',True))
         self.ditto_alignment.set(ps.DITTO_ALIGN[s.get('ditto_alignment','center')])
         self.ditto_keep_adult.set(s.get('ditto_keep_adult',True))
         self.serial_superscript.set(s.get('serial_superscript',False))
@@ -246,6 +250,8 @@ class App:
                 candidate.update(show_column_headers=self.show_headers.get(),mapping_confirmed=self.confirmed.get(),
                     fixed_20_rows=self.fixed_20_rows.get(),ditto_bio=self.ditto_bio.get(),ditto_patient=self.ditto_patient.get(),
                     show_region_lines=self.show_region_lines.get(),export_glucose_ac=self.export_glucose_ac.get(),glucose_ac_columns=5,
+                    show_order_notes=self.show_order_notes.get(),
+                    apply_order_note_rules=self.apply_order_note_rules.get(),
                     merged_color_enabled=self.merged_color_enabled.get(),merged_order_colors=colors,
                     merge_exclusions_enabled=self.merge_exclusions_enabled.get(),merge_excluded_worknos=excluded,
                     ditto_font_size=ditto_size,ditto_bold=self.ditto_bold.get(),
@@ -399,7 +405,8 @@ class App:
             except Exception:self.events.put(('error','未能完成輸出，請確認輸出資料夾可寫入，檔案未被占用。'))
         threading.Thread(target=work,daemon=True).start()
     def generate(self,database,day,target,settings):
-        try:data=read_access(database,day,include_identity=True)
+        needs_notes=settings.get('show_order_notes',True) or settings.get('apply_order_note_rules',True)
+        try:data=read_access(database,day,include_identity=True,include_order_notes=needs_notes)
         except Exception:
             self.events.put(('connection',(self.connection_token,str(database),False,'資料庫讀取失敗，請重新測試連線。')))
             raise

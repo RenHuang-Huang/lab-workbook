@@ -7,8 +7,6 @@ from . import panel_children as pc
 
 def prepare(rows,settings,layout):
     from .handwritten import SHORT,clinic_label
-    from .font_settings import sizes
-    fonts=sizes(settings)
     output=copy.deepcopy(rows);counts={g:0 for g in ('e411','hba1c','mab')}
     match_rule=ls.matcher(layout)
     reverse={v:k for k,v in sr.ZONE_KEYS.items()}
@@ -98,15 +96,8 @@ def prepare(rows,settings,layout):
         for item in tokens:
             item['machines']=[g for g in item['machines'] if g not in serial_targets or serial_targets[g]==item['key']]
             item['machine']=next(iter(item['machines']),None)
-        adult=set(row.get('adult_compact_codes',[]))
-        if 'adult_compact_codes' not in row:
-            adult={c for p in row.get('verified_panels',[]) if (p.get('name') or '').strip().startswith(('成健','不報成健')) for c in p['members']}
-        if row.get('adult_health_flag') and settings.get('compact_adult_health',True):
-            fold=[t for t in tokens if not t['configured'] and not t['machines'] and not t.get('panel_member') and set(t['codes'])<=adult]
-            for t in fold:
-                tokens.remove(t)
-                for a in accounting:
-                    if a['code'] in t['codes']:a.update(display='@',covered_by='當筆IC旗標＋已驗證成健套組成員')
+        # IC metadata must not add @ or hide otherwise printable items. An @
+        # label follows the same registered-panel/item visibility rules above.
         # The established urine-result grouping remains unchanged.
         labels={t['original_label'] for t in tokens if t['zone']=='other'};fold_labels=set()
         if {'mab','U-cre','U-ACR'}<=labels:fold_labels|={'U-cre','U-ACR'}
@@ -120,13 +111,6 @@ def prepare(rows,settings,layout):
         for label in row.get('routine','').split(' / '):
             if label.startswith('套組待核:') and not any(label=='套組待核:'+p['code'] for p,_ in printed_panels):
                 tokens.append(token(label,label,'bio',[]))
-        # A registered panel explicitly printed as @ already supplies this mark.
-        # Keep its panel/member provenance; do not add a second flag-only glyph.
-        if row.get('adult_health_flag') and not any(t.get('panel') and t['zone']=='bio' and t['label']=='@' for t in tokens):
-            adult_token=token('@','@','bio',[])
-            adult_token['font_size']=fonts['adult_health']
-            adult_token['placement']=dict(print_enabled=True,subregion='A',position=1)
-            tokens.insert(0,adult_token)
         zones={key:[] for key in reverse}
         for item in tokens:zones[item['zone']].append(item)
         for group in counts:

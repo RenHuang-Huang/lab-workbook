@@ -55,6 +55,9 @@ def merge_rows(data,settings):
     for row in result:
         group,adult_codes=provenance[(row['department'],row['workno'])]
         row['order_mode']='merge';row['merged_count']=len(group)
+        row['order_notes']=[note for r in group for note in r['order_notes']] if all(r.get('order_notes') is not None for r in group) else None
+        row['order_notes_sources']=[{'department':r['department'],'workno':r['workno'],
+                                    'notes':copy.deepcopy(r.get('order_notes'))} for r in group]
         row['merge_excluded']=work_number(row['workno']) in excluded
         row['source_orders']=[{'department':r['department'],'workno':r['workno'],
                                'visit_date':r.get('visit_date'),'order_date':r.get('order_date')} for r in group]

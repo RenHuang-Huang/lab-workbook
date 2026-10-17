@@ -97,20 +97,18 @@ def page_slots(rows,date):
 
 def prepare(rows,settings):
     """Keep raw items unchanged; re-route visible items with saved layout rules."""
+    from . import order_note_rules
     config=settings.get('layout') or ls.load();ls.validate(config)
     if config.get('version',2)>=3:
         from .print_items import prepare as prepare_items
-        return prepare_items(rows,settings,config)
+        return order_note_rules.apply(prepare_items(rows,settings,config),settings)
     out=copy.deepcopy(rows)
     seq={'e411':0,'hba1c':0,'mab':0}
     for row in out:
         zones={k:[] for k in ZONE_KEYS.values()};groups={'e411':[],'hba1c':[],'mab':[]}
         row['display_accounting']=[]
-        adult_codes=set()
-        if row.get('adult_health_flag') and settings.get('compact_adult_health',True):
-            for p in row.get('verified_panels',[]):
-                if (p['name'] or '').strip().startswith(('成健','不報成健')):adult_codes.update(p['members'])
-            if 'adult_compact_codes' in row:adult_codes=set(row['adult_compact_codes'])
+        # Legacy snapshots also keep IC flags as metadata only: no implicit @
+        # and no suppression of items in favour of that implicit mark.
         for group in ('routine','e411','hba1c','mab'):
             tokens=[]
             for label in filter(None,(x.strip() for x in row.get(group,'').split(' / '))):
@@ -149,9 +147,6 @@ def prepare(rows,settings):
                 # Presentation destination and sequence membership are independent.
                 sequence_group=group if group in groups else None
                 item={'label':shown,'original_label':label,'machine':sequence_group,'configured':bool(override),'codes':[s.get('code') for s in source if s.get('code')]}
-                if not override and group=='routine' and item['codes'] and set(item['codes'])<=adult_codes:
-                    row['display_accounting'].append({'original':label,'zone':zone,'display':'@','covered_by':'當筆IC旗標＋已驗證成健套組成員'})
-                    continue
                 zones[zone].append(item)
                 if sequence_group:groups[sequence_group].append(item)
                 row['display_accounting'].append({'original':label,'zone':zone,'display':shown,'covered_by':None})
@@ -206,7 +201,7 @@ def prepare(rows,settings):
         zones['other'].sort(key=lambda x:0 if x['machine']=='hba1c' else 1 if x['machine']=='mab' else 2 if x['original_label']=='UTP' else 3)
         row['zones']=zones
         row['clinic_print']=clinic_label(row['clinic'])
-    return out
+    return order_note_rules.apply(out,settings)
 
 def display_work_numbers(row):
     """The workbook and AC sheet use exactly the same visible work numbers."""
@@ -232,6 +227,13 @@ def export(path,rows,date,settings,draft=False):
     from reportlab.lib.units import mm
     from .pdf_fonts import PdfFonts
     if not rows:raise ValueError('當日沒有資料。')
+    show_order_notes=bool(settings.get('show_order_notes',False))
+    if show_order_notes:
+        for row in rows:
+            notes=row.get('order_notes')
+            if notes is None:raise ValueError('這份工作進度尚未讀取檢驗單備註，請重新匯入當日資料，或取消「暫時加印檢驗單備註」。')
+            if not isinstance(notes,list) or any(not isinstance(note,str) for note in notes):
+                raise ValueError('檢驗單備註格式不正確，請重新匯入當日資料。')
     prepared=prepare(rows,settings) if legacy_prepared is None else legacy_prepared
     if legacy:
         # Older saved progress may contain explicit display fields without source
@@ -241,12 +243,11 @@ def export(path,rows,date,settings,draft=False):
         for row in prepared:
             for zone,key in sr.ZONE_KEYS.items():
                 for item in row['zones'][key]:
+                    if item.get('note_annotation'):continue
                     item['key']=next(iter(item.get('codes',[])),item['label'])
                     item['machines']=[item['machine']] if item.get('machine') else []
                     item['color']=item_color(config,item['key'],item['label'],row,settings,zone,item.get('codes',[]))
                     item['placement']=sr.default_placement(dict(kind='單項',label=item['label'],zone=zone,machine_group=item.get('machine')))
-            if row.get('adult_health_flag'):
-                row['zones']['bio'].insert(0,dict(key='@',label='@',codes=[],machines=[],font_size=fonts['adult_health'],color=item_color(config,'@','@',row,settings,'生化／糞便'),placement=dict(print_enabled=True,subregion='A',position=1)))
     for prepared_row in prepared:
         for key,items in prepared_row['zones'].items():
             for item in items:item['_serial_base_size']=fonts[key]
@@ -257,15 +258,18 @@ def export(path,rows,date,settings,draft=False):
     typefaces=PdfFonts(settings)
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix('.partial.pdf')
     c=canvas.Canvas(str(tmp),pagesize=A4);c.setTitle(f'檢驗工作簿 {date}');c.setAuthor('工作簿輸出（本機）')
-    H=A4[1];xs=[10]
+    # Keep all existing column widths; use 5 mm margins for the temporary memo column.
+    H=A4[1];xs=[5 if show_order_notes else 10]
     for w in WIDTHS:xs.append(xs[-1]+w)
+    note_width=10 if show_order_notes else 0
+    table_right=xs[-1]+note_width
     body,rowh=page_geometry(settings);base_rowh=rowh
     headers=bool(settings.get('show_column_headers',False));red='#B02631';blue='#215CAE';black='#202830'
     force=bool(settings.get('force_export',False));adjustments=[];commands=None
     def width(s,size):return typefaces.width(s,size)/mm
-    def item_width(s,size):
+    def item_width(s,size,bold=False):
         # Preserve taller glyphs in fixed columns, using moderate horizontal compression.
-        return max(0,(typefaces.width(s,size)-min(.08,size/75)*max(0,len(str(s))-1))*.78/mm)
+        return max(0,(typefaces.width(s,size,bold)-min(.08,size/75)*max(0,len(str(s))-1))*.78/mm)
     def item_text(s,x,center,w,size=11,color=black):
         if measure_run(item_width,s,size,color)>w+.001:raise LayoutCapacityError('項目文字超出欄寬')
         if commands is not None:commands.append(('item',(s,x,center,w,size,color)));return
@@ -273,10 +277,12 @@ def export(path,rows,date,settings,draft=False):
         ink=color if isinstance(color,Ink) else Ink(color)
         c.setFillColor(ink.color)
         t=c.beginText(x*mm,H-(center+size/mm*.32)*mm)
+        if ink.bold and typefaces.cjk_bold==typefaces.cjk:
+            c.setStrokeColor(ink.color);c.setLineWidth(.18);t.setTextRenderMode(2)
         # Explicit serial metadata keeps colored labels at the ordinary baseline.
         actual_size=run_size(size,ink)
         t.setRise(run_rise(size,ink))
-        typefaces.write(t,s,actual_size,horizontal_scale=78,char_space=-min(.08,actual_size/75));c.drawText(t)
+        typefaces.write(t,s,actual_size,ink.bold,horizontal_scale=78,char_space=-min(.08,actual_size/75));c.drawText(t)
         c.restoreState()
     def text(s,x,center,w,size=8.5,color=black):
         if width(s,size)>w:raise LayoutCapacityError('文字超出欄寬')
@@ -297,6 +303,19 @@ def export(path,rows,date,settings,draft=False):
     def height_fit(size,height):
         ascent,descent=typefaces.metrics(1)
         return min(size,max(.1,height-.6)*mm/max(1,ascent-descent))
+    def draw_order_notes(row,y,tiny=False):
+        if not show_order_notes:return
+        entries=row.get('order_notes') or []
+        if not entries:return
+        available=note_width-.8
+        size=height_fit(10,rowh/len(entries))
+        # Each semicolon entry stays on its own small row. Do not truncate content.
+        # Limit ordinary horizontal compression to 50%; long memos use the existing
+        # explicit force-export flow rather than silently disappearing.
+        size=min(size,*(size*available/max(width(note,size)*.5,.001) for note in entries))
+        if size<6 and not tiny:raise LayoutCapacityError('暫時備註欄內容過長或小列過多，請使用強制輸出或取消備註欄')
+        for j,note in enumerate(entries):
+            fitted_text(note,xs[-1]+.4,y+(j+.5)*rowh/len(entries),available,size)
     def line(x,y,x2,y2,color='#B2B9C1',lw=.3):
         if commands is not None:commands.append(('line',(x,y,x2,y2,color,lw)));return
         c.setStrokeColor(color);c.setLineWidth(lw);c.line(x*mm,H-y*mm,x2*mm,H-y2*mm)
@@ -329,20 +348,31 @@ def export(path,rows,date,settings,draft=False):
         # Do not turn a long custom work number into an unreadably narrow stroke.
         size=min(size,*(available*size/(max(width(n,size),.001)*.6) for n in numbers))
         for j,n in enumerate(numbers):fitted_text(n,xs[1]+.7,y+(j+.5)*rowh/len(numbers),available,size,color)
-    def visit_dates(values,y,force=False):
+    def visit_dates(values,y,force=False,marks=()):
         from .visit_dates import calendar_date
-        if not values:return
+        if not values and not marks:return
         if len(values)>3 and not force and fixed_20:raise LayoutCapacityError('併單有超過三個不同就醫日期，請改用拆單以完整顯示日期')
-        size=min(fonts['visit_date'],max(.1,rowh/len(values)-.7)*mm/2)
+        # A date retains its day/month pair. Memo marks occupy a separate band
+        # beneath the dates inside the existing visit-date column, without hiding them.
+        units=2*len(values)+bool(marks)
+        cellh=rowh*2/units
+        size=min(fonts['visit_date'],max(.1,cellh-.7)*mm/2)
         ascent,descent=typefaces.metrics(size,'0123456789')
         offset=((ascent-descent)/mm+.3)/2
         for j,value in enumerate(values):
-            day=calendar_date(value);center=y+(j+.5)*rowh/len(values)
+            day=calendar_date(value);center=y+(j+.5)*cellh
             x=xs[2];w=VISIT_DATE_WIDTH
             for label,cy in ((str(day.day),center-offset),(str(day.month),center+offset)):
                 label_width=min(w-1,width(label,size))
                 fitted_text(label,x+(w-label_width)/2,cy,label_width,size,red)
             line(x+.5,center,x+w-.5,center,red,.45)
+        if marks:
+            label=''.join(marks);height=rowh/units
+            center=y+cellh*len(values)+height/2
+            ascent,descent=typefaces.metrics(1,label,True)
+            size=min(fonts['visit_date'],max(.1,height-.6)*mm/max(.001,ascent-descent))
+            available=VISIT_DATE_WIDTH-.8;measured=min(available,typefaces.width(label,size,True)/mm)
+            fitted_text(label,xs[2]+(VISIT_DATE_WIDTH-measured)/2,center,measured,size,red,True)
     def zone_size(key,lanes=3,dense=False):
         target=fonts[key]
         if lanes==4:target*=9.5/(10.5 if key in ('e411','other') else 11)
@@ -448,7 +478,7 @@ def export(path,rows,date,settings,draft=False):
     def item_segments(item,seen=None):
         seen=printed if seen is None else seen
         machines=[g for g in item.get('machines',([item['machine']] if item.get('machine') else [])) if g not in seen]
-        runs=[(item['label'],Ink(item.get('color',black)))]
+        runs=[(item['label'],Ink(item.get('color',black),bold=bool(item.get('bold',False))))]
         for group in machines:
             number=str(current[group+'_seq'])+('/' if group=='mab' else '')
             color=serial_ink(group,settings,item.get('_serial_base_size',fonts['e411' if group=='e411' else 'other']))
@@ -500,7 +530,7 @@ def export(path,rows,date,settings,draft=False):
                 extent=0
                 for _,runs,_,_,_,_ in planned:
                     for value,ink in runs:
-                        ascent,descent=typefaces.ink_metrics(run_size(size,ink),value)
+                        ascent,descent=typefaces.ink_metrics(run_size(size,ink),value,ink.bold if isinstance(ink,Ink) else False)
                         rise=run_rise(size,ink)
                         extent=max(extent,2*(ascent+rise-size*.32),2*(size*.32-descent-rise))
                 ratio=min(1,max(.1,cellh-.2)*mm/max(.001,extent))
@@ -548,6 +578,11 @@ def export(path,rows,date,settings,draft=False):
             needed=max(needed,len(lines)*(fonts[key]/mm*1.15+.6))
         numbers=row.get('workno_lines') or [row.get('workno_display') or row['workno']]
         needed=max(needed,len(numbers)*(fonts['workno']/mm*1.15+.6),len(row.get('visit_dates',[]))*(2*fonts['visit_date']/mm+.7))
+        if row.get('note_adjustments',{}).get('visit_marks'):
+            needed=max(needed,len(row.get('visit_dates',[]))*(2*fonts['visit_date']/mm+.7)+fonts['visit_date']/mm*1.15+.6)
+        if show_order_notes:
+            ascent,descent=typefaces.metrics(10)
+            needed=max(needed,len(row.get('order_notes') or [])*((ascent-descent)/mm+.6))
         return dict(zones=zones,height=needed)
     def draw_adaptive_zone(plan,key,col,y,scale=1):
         if not plan:return
@@ -615,9 +650,9 @@ def export(path,rows,date,settings,draft=False):
     def compact_row(row,y,previous):
         from .compact_layout import pack_segments
         if row['clinic_print']!=previous:
-            line(10,y,20,y);identity(row['clinic_print'],0,y,allow_tiny=True)
+            line(xs[0],y,xs[1],y);identity(row['clinic_print'],0,y,allow_tiny=True)
         work_numbers(row,y,red,force=True)
-        visit_dates(row.get('visit_dates',[]),y,force=True)
+        visit_dates(row.get('visit_dates',[]),y,force=True,marks=row.get('note_adjustments',{}).get('visit_marks',()))
         draw_patient(row,y,tiny=True)
         # Adult-health @ is a token in biochemical subregion A.
         zones=row['zones']
@@ -655,7 +690,8 @@ def export(path,rows,date,settings,draft=False):
                 tokens.append((segments,results))
             packed=pack_segments(tokens,w,rowh,item_width,max_lanes=3,start_size=fonts[key])
             draw_packed(packed,packed_x,w,y)
-        line(20,y+rowh,200,y+rowh,red,.6)
+        draw_order_notes(row,y,tiny=True)
+        line(xs[1],y+rowh,table_right,y+rowh,red,.6)
         return minimum_font(commands)
     def minimum_font(pending):
         return min(run_size(args[4],args[5]) if kind=='item' else args[4]
@@ -690,15 +726,18 @@ def export(path,rows,date,settings,draft=False):
                     inset=VISIT_DATE_WIDTH if i==2 else 0
                     for j,s in enumerate(parts):text(s,xs[i]+.4+inset,body-7+j*3 if len(parts)>1 else body-5.5,WIDTHS[i]-.8-inset,6.8)
                 for j,s in enumerate(('就','醫')):text(s,xs[2]+1.2,body-7+j*3,VISIT_DATE_WIDTH-1.2,6.8)
+                if show_order_notes:
+                    for j,s in enumerate(('暫時','備註')):text(s,xs[-1]+.4,body-7+j*3,note_width-.8,6.8)
             end=291 if fixed_20 else entries[-1]['top']+entries[-1]['height'] if entries else body
-            line(10,body,200,body,lw=.45);line(20,body,20,end,lw=.45)
+            line(xs[0],body,table_right,body,lw=.45);line(xs[1],body,xs[1],end,lw=.45)
+            if show_order_notes:line(xs[-1],body,xs[-1],end,'#E3E6E9',.3)
             if settings.get('show_region_lines',False):
                 for boundary in xs[6:11]:line(boundary,body,boundary,end,'#E3E6E9',.3)
             if fixed_20:
-                for blank in range(len(entries),20):line(20,body+(blank+1)*base_rowh,200,body+(blank+1)*base_rowh)
+                for blank in range(len(entries),20):line(xs[1],body+(blank+1)*base_rowh,table_right,body+(blank+1)*base_rowh)
             previous=None
             for entry in entries:
-                index=entry['index'];y=entry['top'];rowh=entry['height'];line(20,y+rowh,200,y+rowh)
+                index=entry['index'];y=entry['top'];rowh=entry['height'];line(xs[1],y+rowh,table_right,y+rowh)
                 if slots[index] is None:
                     previous=None
                     continue
@@ -710,9 +749,9 @@ def export(path,rows,date,settings,draft=False):
                 commands=[];previous_before=previous;counts_before=dict(expanded_counts)
                 try:
                     if current['clinic_print']!=previous:
-                        line(10,y,20,y);identity(current['clinic_print'],0,y);previous=current['clinic_print']
+                        line(xs[0],y,xs[1],y);identity(current['clinic_print'],0,y);previous=current['clinic_print']
                     work_numbers(current,y,red if entry['oversized'] or adaptive_reduced else black)
-                    visit_dates(current.get('visit_dates',[]),y)
+                    visit_dates(current.get('visit_dates',[]),y,marks=current.get('note_adjustments',{}).get('visit_marks',()))
                     draw_patient(current,y)
                     # Adult-health @ is rendered with the biochemical tokens.
                     # Borrow contiguous unoccupied areas only. Never borrow result slots.
@@ -728,7 +767,7 @@ def export(path,rows,date,settings,draft=False):
                             minimum=minimum_font(commands)
                             adjustments.append({'workno':current['workno'],'department':current['department'],
                                 'reason':'單筆超過一頁高度或子區域單字寬度不足，已強制縮字','min_font_size':round(minimum,2)})
-                            line(20,y+rowh,200,y+rowh,red,.6)
+                            line(xs[1],y+rowh,table_right,y+rowh,red,.6)
                     elif subregions_enabled:
                         for key,col in [('bio',6),('cbc',7),('sendout',8),('e411',9),('other',10)]:
                             if key=='bio' and current_ditto['bio']:draw_bio_ditto(y)
@@ -744,6 +783,7 @@ def export(path,rows,date,settings,draft=False):
                         # Explicit note band is unavailable in fully occupied 3-lane rows.
                         if z['sendout']:raise LayoutCapacityError('備註與外送區相衝，請調整')
                         identity(current['notes'],8,y)
+                    draw_order_notes(current,y)
                 except LayoutCapacityError as e:
                     if not force:raise LayoutCapacityError(f"工作號 {current['workno']}：{e}") from None
                     commands=[];printed=set();expanded_counts.update(counts_before)
@@ -753,7 +793,7 @@ def export(path,rows,date,settings,draft=False):
                     raise ValueError(f"工作號 {current['workno']}：{e}") from None
                 pending=commands;commands=None
                 for kind,args in pending:{'text':text,'fit':fitted_text,'item':item_text,'line':line}[kind](*args)
-            line(10,end,20,end)
+            line(xs[0],end,xs[1],end)
             # No footer; use the recovered space for the workbook.
             c.showPage()
         c.save();os.replace(tmp,path)
@@ -766,6 +806,13 @@ def export(path,rows,date,settings,draft=False):
             'forced_adjustments':adjustments,'forced_export':force,'font_sizes':fonts,'subregions_enabled':subregions_enabled,
             'sequences':{g:sum(bool(r[g+'_seq']) for r in prepared) for g in ('e411','hba1c','mab')},
             'subregion_columns':fixed_columns,'show_region_lines':bool(settings.get('show_region_lines',False)),
+            'order_notes':{'enabled':show_order_notes,'source':'LCHKDATA.LCHK_SMEMO1' if show_order_notes else None,
+                           'column_width_mm':note_width,'entries':sum(len(r.get('order_notes') or []) for r in rows) if show_order_notes else 0},
+            'table_left_mm':xs[0],'table_right_mm':table_right,
+            'order_note_adjustments':{'enabled':bool(settings.get('apply_order_note_rules',False)),
+                'visit_mark_rows':sum(bool(r.get('note_adjustments',{}).get('visit_marks')) for r in prepared),
+                'urine_mark_rows':sum(bool(r.get('note_adjustments',{}).get('urine_marks')) for r in prepared),
+                'mab_suppressed_rows':sum(bool(r.get('note_adjustments',{}).get('suppress_mab')) for r in prepared)},
             'machine_serial_style':'superscript' if settings.get('serial_superscript',False) else 'baseline',
             'serial_font_size':float(settings.get('serial_font_size',14)),
             'serial_colors':serial_colors(settings),

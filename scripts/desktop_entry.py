@@ -96,6 +96,16 @@ def self_test(destination):
                 return out
             assert not any('範例' in x for x in labels(root))
             assert '測試連線' in labels(root)
+            assert '暫時加印檢驗單備註' in labels(root) and '依備註欄調整' in labels(root)
+            note_options={name:bool(settings.get(name,True)) for name in ('show_order_notes','apply_order_note_rules')}
+            for name,value in note_options.items():
+                assert getattr(app,name).get()==value
+                getattr(app,name).set(not value)
+            assert app.save_preferences(False,scope='print')
+            for name,value in note_options.items():
+                assert core.get_settings()[name]==(not value)
+                getattr(app,name).set(value)
+            assert app.save_preferences(False,scope='print')
             assert '安裝 Access 元件' in labels(root) and '匯出連線診斷' in labels(root)
             from workbook import access_runtime
             import hashlib
@@ -152,6 +162,8 @@ def self_test(destination):
             from unittest.mock import patch
             import time
             fixture=core.safe_fixture()
+            # Old synthetic demo assets predate the explicit memo field.
+            for header in fixture['headers']:header.setdefault('ORDER_NOTE','')
             import copy
             probe=copy.deepcopy(fixture);probe['headers']=probe['headers'][:2]
             worknos={h['LCHK_WORKNO'] for h in probe['headers']}

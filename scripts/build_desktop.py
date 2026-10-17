@@ -21,7 +21,7 @@ def synthetic_demo():
         'source_file':'人工建立的示範資料，非真實檢驗紀錄'}
     base=['0921','101','102','204','301','302','3061','307']
     for i in range(1,25):
-        no=f'{i:05}';data['headers'].append(dict(LCHK_DEPT='DEMO',LCHK_WORKNO=no,LCHK_SOURCE='DEMO'))
+        no=f'{i:05}';data['headers'].append(dict(LCHK_DEPT='DEMO',LCHK_WORKNO=no,LCHK_SOURCE='DEMO',ORDER_NOTE=''))
         codes=base.copy()
         if i%2==0:codes+=['096']
         if i%3==0:codes+=['205']

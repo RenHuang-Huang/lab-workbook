@@ -108,8 +108,6 @@ def build(catalog,settings,layout,source=None,resolved_rows=None):
         for member in panel['members']:
             member['panel_print_enabled']=child_enabled(layout,panel['key'],dict(member,print_enabled=member.get('print_enabled') is not False))
             member['panel_updated_at']=layout.get('item_updated_at',{}).get(child_key(panel['key'],str(member['code'])))
-        if panel['name'].strip().startswith(('成健','不報成健')):
-            panel['conditional_compression']='當筆IC旗標＋已驗證成健成員才合併為@'
     clinics=[dict(code=str(h['HOS_ID']),name=h['HOS_NAME'] or '',
         label=clinic_label(layout.get('clinic_aliases',{}).get(str(h['HOS_ID']),h['HOS_NAME'] or str(h['HOS_ID']))),
         rule_source='使用者設定' if str(h['HOS_ID']) in layout.get('clinic_aliases',{}) else '移除診所二字') for h in usable['hospitals']]

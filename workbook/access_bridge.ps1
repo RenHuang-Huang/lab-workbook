@@ -2,6 +2,7 @@
       [Parameter(Mandatory=$true)][datetime]$Date,
       [Parameter(Mandatory=$true)][string]$Output,
       [switch]$IncludeIdentity,
+      [switch]$IncludeOrderNotes,
       [string]$CaseWorkNumber='',
       [switch]$UsageStatistics,
       [datetime]$StartDate,
@@ -12,6 +13,7 @@ if([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'MTA'){
  $bridgeArgs=@('-NoProfile','-NonInteractive','-Mta','-ExecutionPolicy','Bypass','-File',$PSCommandPath,
                '-Database',$Database,'-Date',$Date.ToString('yyyy-MM-dd',[cultureinfo]::InvariantCulture),'-Output',$Output,'-Provider',$Provider)
  if($IncludeIdentity){$bridgeArgs+='-IncludeIdentity'}
+ if($IncludeOrderNotes){$bridgeArgs+='-IncludeOrderNotes'}
  if($CaseWorkNumber){$bridgeArgs+=@('-CaseWorkNumber',$CaseWorkNumber)}
  if($UsageStatistics){$bridgeArgs+=@('-UsageStatistics','-StartDate',$StartDate.ToString('yyyy-MM-dd',[cultureinfo]::InvariantCulture))}
  & $bridgeShell @bridgeArgs
@@ -141,7 +143,8 @@ try{
   $package=[ordered]@{date=$Date.ToString('yyyy-MM-dd');headers=$headers;details=$details.ToArray();items=$items;hospitals=$hospitals;sets=$sets;set_members=$setMembers;identity_local_only=$true;lookup_only=$true}
   $package | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 -LiteralPath $Output
  }else{
- # Explicit local-only name / sex / chart number. Never return raw free text, card or ID values.
+ # Explicit local-only name / sex / chart number. Never return card or national-ID values.
+ # The separately requested order memo is returned only with IncludeOrderNotes, to a local file.
  $identity='';$headerFrom='LCHKDATA AS h'
  if($IncludeIdentity){
   $headerFrom='LCHKDATA AS h LEFT JOIN LPATIENT AS p ON h.LCHK_PATKEY=p.LPAT_PATKEY'
@@ -153,7 +156,9 @@ try{
   # User explicitly confirmed LCHK_PATID as chart number. Local file only, never stdout.
   $identity=",h.LCHK_PATNAME,h.LCHK_SEX,h.LCHK_PATID AS CHART_NUMBER,$insurance AS INSURANCE_LABEL"
  }
- $headers=Rows "SELECT h.LCHK_DEPT,h.LCHK_WORKNO,h.LCHK_SOURCE,h.LCHK_INDATE,h.LCHK_OPDDATE$identity FROM $headerFrom WHERE $where ORDER BY h.LCHK_DEPT,h.LCHK_WORKNO"
+ $orderNote=''
+ if($IncludeOrderNotes){$orderNote=',h.LCHK_SMEMO1 AS ORDER_NOTE'}
+ $headers=Rows "SELECT h.LCHK_DEPT,h.LCHK_WORKNO,h.LCHK_SOURCE,h.LCHK_INDATE,h.LCHK_OPDDATE$identity$orderNote FROM $headerFrom WHERE $where ORDER BY h.LCHK_DEPT,h.LCHK_WORKNO"
  $details=Rows "SELECT h.LCHK_DEPT,h.LCHK_WORKNO,d.LCHK_ITEM,d.LCHK_ITEMTYPE,d.LCHK_ITEMSER,d.LCHK_MKEY FROM LCHKDATA AS h INNER JOIN LCHKDATA2 AS d ON h.LCHK_ID=d.LCHK_ID WHERE $where ORDER BY h.LCHK_DEPT,h.LCHK_WORKNO,d.LCHK_ITEMSER"
  $items=Rows 'SELECT LCI_ID,LCI_NAME,LCI_NAMEC,LCI_NAMES FROM LCHKITEM'
  $hospitals=Rows 'SELECT HOS_ID,HOS_NAME FROM LHOSPITAL'
@@ -161,7 +166,7 @@ try{
  $setMembers=Rows 'SELECT LCS_UNIKEY,LCS_ITEM,LCS_SERIAL FROM LCHKSET2'
  # Only return positive work-number flags, never the raw card value.
  $adultHealth=Rows "SELECT DISTINCT h.LCHK_DEPT,h.LCHK_WORKNO FROM LCHKDATA AS h INNER JOIN LCHKNHI AS n ON h.LCHK_ID=n.LCHK_ID WHERE $where AND UCase(Left(Trim(n.LCHK_CARD),2))='IC'"
- $package=[ordered]@{date=$Date.ToString('yyyy-MM-dd');headers=$headers;details=$details;items=$items;hospitals=$hospitals;sets=$sets;set_members=$setMembers;adult_health=$adultHealth;identity_local_only=[bool]$IncludeIdentity;chart_number_source='LCHKDATA.LCHK_PATID'}
+ $package=[ordered]@{date=$Date.ToString('yyyy-MM-dd');headers=$headers;details=$details;items=$items;hospitals=$hospitals;sets=$sets;set_members=$setMembers;adult_health=$adultHealth;identity_local_only=[bool]$IncludeIdentity;chart_number_source='LCHKDATA.LCHK_PATID';order_notes_included=[bool]$IncludeOrderNotes;order_notes_source=$(if($IncludeOrderNotes){'LCHKDATA.LCHK_SMEMO1'}else{''})}
  $package | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 -LiteralPath $Output
  }
 } catch {

@@ -11,16 +11,18 @@ from workbook import layout_settings as ls,catalog_settings as cs,subregions as 
 def data_rows(patterns):
     data=dict(date='2026-10-14',headers=[],details=[],items=[],sets=[],set_members=[],
               hospitals=[dict(HOS_ID='DEMO',HOS_NAME='人工測試診所')],identity_local_only=False)
-    settings=core.default_settings();settings.update(ditto_bio=False,ditto_patient=False)
+    # Historical coordinate tests retain their original table geometry. New memo
+    # tests explicitly enable the additional column and check its shifted bounds.
+    settings=core.default_settings();settings.update(ditto_bio=False,ditto_patient=False,show_order_notes=False)
     settings['layout']=sr.migrate(ls.defaults(),[])
     for code in dict.fromkeys(c for codes in patterns for c in codes):
         data['items'].append(dict(LCI_ID=code,LCI_NAME=code,LCI_NAMES=code))
         settings['layout']=cs.set_override(settings['layout'],code,code,'生化／糞便')
-        settings['layout']['placements'][code]=dict(print_enabled=True,subregion='B',position=None)
+        settings['layout']['placements'][code]=dict(print_enabled=True,subregion='A' if code=='@' else 'B',position=None)
     for index,codes in enumerate(patterns,1):
         workno=f'{index:05}'
         data['headers'].append(dict(LCHK_DEPT='DEMO',LCHK_WORKNO=workno,LCHK_SOURCE='DEMO',
-                                   LCHK_PATNAME='人工個案',LCHK_SEX='1',CHART_NUMBER='TEST001'))
+                                   LCHK_PATNAME='人工個案',LCHK_SEX='1',CHART_NUMBER='TEST001',ORDER_NOTE=''))
         data['details'] += [dict(LCHK_DEPT='DEMO',LCHK_WORKNO=workno,LCHK_ITEM=code,LCHK_ITEMTYPE='I',LCHK_ITEMSER=i)
                            for i,code in enumerate(codes)]
     return data,settings
@@ -82,7 +84,7 @@ class PrintPreferencesTests(unittest.TestCase):
 
     def test_keep_at_marker_when_other_bio_is_ditto_and_reset_at_page_boundary(self):
         for fixed in (True,False):
-            data,s=data_rows([['AA']]*22);s.update(ditto_bio=True,fixed_20_rows=fixed)
+            data,s=data_rows([['@','AA']]*22);s.update(ditto_bio=True,fixed_20_rows=fixed)
             rows=core.make_rows(data,s)
             for row in rows:row['adult_health_flag']=True
             before=copy.deepcopy(rows);result,pages=render(data,s,rows)
@@ -95,7 +97,7 @@ class PrintPreferencesTests(unittest.TestCase):
             self.assertEqual(sum(c['text']=='@' for page in pages for c in page),result['workbook_pages'])
 
     def test_at_alone_does_not_generate_empty_ditto_and_changing_at_does_not_hide_it(self):
-        data,s=data_rows([[],[],['AA'],['AA'],['AA']]);s.update(ditto_bio=True)
+        data,s=data_rows([['@'],['@'],['AA'],['@','AA'],['AA']]);s.update(ditto_bio=True)
         rows=core.make_rows(data,s)
         for i in (0,1,3):rows[i]['adult_health_flag']=True
         result,pages=render(data,s,rows)
@@ -151,7 +153,7 @@ class PrintPreferencesTests(unittest.TestCase):
 
     def test_at_and_ditto_do_not_overlap_for_any_alignment(self):
         for align in ('left','center','right'):
-            data,s=data_rows([['AA'],['AA']]);s.update(ditto_bio=True,ditto_alignment=align)
+            data,s=data_rows([['@','AA'],['@','AA']]);s.update(ditto_bio=True,ditto_alignment=align)
             rows=core.make_rows(data,s)
             for row in rows:row['adult_health_flag']=True
             summary,pages=render(data,s,rows);top=summary['row_layout'][1]['top_mm']*MM

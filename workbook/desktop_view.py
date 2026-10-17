@@ -490,6 +490,8 @@ def build_print(app):
     setting_row(body,'每張 A4 固定 20 筆',app.fixed_20_rows,'取消後，依內容加高每筆並自動換頁。')
     setting_row(body,'列印欄位標頭',app.show_headers,'在每頁顯示診所、工作號及各檢驗區標頭。')
     setting_row(body,'以淡灰線區隔列印區域',app.show_region_lines,'在檢驗區之間加入淡灰色分隔線。')
+    setting_row(body,'暫時加印檢驗單備註',app.show_order_notes,'表格向左移，右側加入備註欄；分號分隔的內容逐項分行，併單保留每張單的備註。取消後恢復原版面。')
+    setting_row(body,'依備註欄調整',app.apply_order_note_rules,'分號分段後，整段等於 + 才標記 +；包含「補」標記補，包含「安信／缺尿」在 CBC／尿液欄標記安信／no UR，皆為紅色粗體。缺尿時整個 mab 組不編流水號，項目名稱保留。併單依合併後全部備註判斷；不必開啟右側暫時欄。')
     setting_row(body,'頁首加入 Glucose AC&PC 填入格',app.export_glucose_ac,'有 AC 或 PC 就列一格；兩項都有也只列一格。5 列 × 5 欄，直排接下頁。')
     body=section('欄位與分區')
     hint(body,'先設定各欄字體，再安排檢驗區內的子區域、空位遞補與自動起始區。')

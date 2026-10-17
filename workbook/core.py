@@ -34,7 +34,7 @@ def default_settings():
         rules[code]={'group':'aux','label':''}
     for code in ('138','1381'):rules[code]={'group':'e411','label':'eAg'}
     return {'version':1,'updated_at':None,'mapping_confirmed':False,'show_column_headers':False,'fixed_20_rows':True,'ditto_bio':True,'ditto_patient':True,
-            'show_region_lines':False,'export_glucose_ac':True,'glucose_ac_columns':5,
+            'show_region_lines':False,'show_order_notes':True,'apply_order_note_rules':True,'export_glucose_ac':True,'glucose_ac_columns':5,
             'merged_color_enabled':True,'merged_color':'#7042A6','ditto_font_size':20,'ditto_bold':True,
             'ditto_alignment':'center','ditto_keep_adult':True,
             'serial_superscript':False,'serial_font_size':14,'serial_colors':{'e411':'#B02631','hba1c':'#215CAE','mab':'#B02631'},
@@ -60,7 +60,7 @@ def save_print_settings(settings,path=None):
 def sort_work(s):
     s=str(s or '');return (0,int(s),s) if s.isdigit() else (1,0,s)
 
-def read_access(database,date,include_identity=True):
+def read_access(database,date,include_identity=True,include_order_notes=False):
     day=dt.date.fromisoformat(date)
     database=Path(database).resolve()
     if not database.is_file():raise ValueError('找不到 Access 檔案。')
@@ -70,6 +70,7 @@ def read_access(database,date,include_identity=True):
         from .access_runtime import read_bridge
         args=['-Date',day.isoformat(),'-Output',str(target)]
         if include_identity:args.append('-IncludeIdentity')
+        if include_order_notes:args.append('-IncludeOrderNotes')
         read_bridge(database,'access_bridge.ps1',args,180)
         if not target.exists():raise ValueError('擷取程序未建立資料檔，請查看連線診斷。')
         data=load_json(target)
@@ -104,6 +105,10 @@ def display_label(code,items,rule):
     item=items.get(code,{})
     return str(rule.get('label') or item.get('LCI_NAMES') or item.get('LCI_NAME') or item.get('LCI_NAMEC') or f'[{code}]').strip()
 
+def split_order_notes(value):
+    """Keep order-level memo entries in source order, including repeated entries."""
+    return [part.strip() for part in re.split(r'[;；\r\n]+',str(value or '')) if part.strip()]
+
 def make_rows(data,settings):
     if settings.get('order_mode','split')=='merge':
         from .merging import merge_rows
@@ -135,6 +140,8 @@ def make_rows(data,settings):
              'sex':h.get('LCHK_SEX') or '', 'birth':h.get('LCHK_BDAYS') or '',
              'chart_number':h.get('CHART_NUMBER') or '', 'insurance_label':h.get('INSURANCE_LABEL') or '',
              'edited':False,'notes':'','source_items':[],
+             # None means not fetched (older progress / notes disabled), not an empty memo.
+             'order_notes':split_order_notes(h.get('ORDER_NOTE')) if 'ORDER_NOTE' in h else None,
              'routine':[],'e411':[],'hba1c':[],'mab':[],'aux':[]}
         try:row.update(row_dates(h,data['date']))
         except ValueError as e:raise ValueError(f"工作號 {key[1]}：{e}") from None

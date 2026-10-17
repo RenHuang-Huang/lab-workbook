@@ -48,6 +48,7 @@ class Ink:
     font_size: float=14
     reference_size: float=14
     superscript: bool=False
+    bold: bool=False
 
 
 def serial_ink(group,settings,reference_size):
@@ -70,6 +71,8 @@ def run_rise(size,ink):
 
 
 def measure_run(measure,value,size,ink):
+    if isinstance(ink,Ink) and ink.bold:
+        return measure(value,run_size(size,ink),bold=True)
     return measure(value,run_size(size,ink))
 
 
@@ -142,6 +145,6 @@ def validate_settings(settings):
         if isinstance(settings.get('serial_font_size'),bool) or not 6<=serial<=24:raise ValueError
     except (ValueError,TypeError):raise ValueError('流水號字級請輸入 6～24 pt。') from None
     serial_colors(settings)
-    for key in ('ditto_bold','merged_color_enabled','ditto_keep_adult','serial_superscript'):
+    for key in ('ditto_bold','merged_color_enabled','ditto_keep_adult','serial_superscript','show_order_notes','apply_order_note_rules'):
         if key in settings and type(settings[key]) is not bool:raise ValueError('顏色及粗體開關必須為勾選值。')
     return size
